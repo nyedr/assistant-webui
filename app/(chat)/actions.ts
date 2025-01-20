@@ -1,19 +1,18 @@
-'use server';
+"use server";
 
-import { type CoreUserMessage, generateText } from 'ai';
-import { cookies } from 'next/headers';
+import { type CoreUserMessage, generateText } from "ai";
+import { cookies } from "next/headers";
 
-import { customModel } from '@/lib/ai';
+import { customModel } from "@/lib/ai";
+import { DEFAULT_MODEL_NAME } from "@/lib/ai/models";
 import {
   deleteMessagesByChatIdAfterTimestamp,
   getMessageById,
-  updateChatVisiblityById,
-} from '@/lib/db/queries';
-import { VisibilityType } from '@/components/visibility-selector';
+} from "@/lib/db/queries";
 
 export async function saveModelId(model: string) {
   const cookieStore = await cookies();
-  cookieStore.set('model-id', model);
+  cookieStore.set("model-id", model);
 }
 
 export async function generateTitleFromUserMessage({
@@ -21,8 +20,12 @@ export async function generateTitleFromUserMessage({
 }: {
   message: CoreUserMessage;
 }) {
+  // Use the DEFAULT_MODEL_NAME as fallback
+  const cookieStore = await cookies();
+  const modelId = cookieStore.get("model-id")?.value ?? DEFAULT_MODEL_NAME;
+
   const { text: title } = await generateText({
-    model: customModel('gpt-4o-mini'),
+    model: customModel(modelId),
     system: `\n
     - you will generate a short title based on the first message a user begins a conversation with
     - ensure it is not more than 80 characters long
@@ -41,14 +44,4 @@ export async function deleteTrailingMessages({ id }: { id: string }) {
     chatId: message.chatId,
     timestamp: message.createdAt,
   });
-}
-
-export async function updateChatVisibility({
-  chatId,
-  visibility,
-}: {
-  chatId: string;
-  visibility: VisibilityType;
-}) {
-  await updateChatVisiblityById({ chatId, visibility });
 }

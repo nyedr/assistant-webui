@@ -1,31 +1,29 @@
-import { cookies } from 'next/headers';
+"use client";
 
-import { Chat } from '@/components/chat';
-import { DEFAULT_MODEL_NAME, models } from '@/lib/ai/models';
-import { generateUUID } from '@/lib/utils';
-import { DataStreamHandler } from '@/components/data-stream-handler';
+import { Chat } from "@/components/chat";
+import { generateUUID } from "@/lib/utils";
+import { DataStreamHandler } from "@/components/data-stream-handler";
+import { ModelProvider } from "@/components/model-provider";
+import { useState } from "react";
 
-export default async function Page() {
+export default function Page() {
   const id = generateUUID();
-
-  const cookieStore = await cookies();
-  const modelIdFromCookie = cookieStore.get('model-id')?.value;
-
-  const selectedModelId =
-    models.find((model) => model.id === modelIdFromCookie)?.id ||
-    DEFAULT_MODEL_NAME;
+  const [selectedModelId, setSelectedModelId] = useState<string>("");
 
   return (
-    <>
-      <Chat
-        key={id}
-        id={id}
-        initialMessages={[]}
-        selectedModelId={selectedModelId}
-        selectedVisibilityType="private"
-        isReadonly={false}
-      />
-      <DataStreamHandler id={id} />
-    </>
+    <ModelProvider onModelSelect={setSelectedModelId}>
+      {selectedModelId && (
+        <>
+          <Chat
+            key={id}
+            id={id}
+            initialMessages={[]}
+            selectedModelId={selectedModelId}
+            isReadonly={false}
+          />
+          <DataStreamHandler id={id} />
+        </>
+      )}
+    </ModelProvider>
   );
 }

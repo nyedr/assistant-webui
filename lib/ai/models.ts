@@ -1,5 +1,4 @@
-// Define your models here.
-
+// Define model types and re-export from the API hook
 export interface Model {
   id: string;
   label: string;
@@ -7,19 +6,9 @@ export interface Model {
   description: string;
 }
 
-export const models: Array<Model> = [
-  {
-    id: "gpt-4o-mini",
-    label: "GPT 4o mini",
-    apiIdentifier: "gpt-4o-mini",
-    description: "Small model for fast, lightweight tasks",
-  },
-  {
-    id: "gpt-4o",
-    label: "GPT 4o",
-    apiIdentifier: "gpt-4o",
-    description: "For complex, multi-step tasks",
-  },
-] as const;
+// Re-export the hook and related types
+export { useModels } from "../../hooks/use-api";
 
-export const DEFAULT_MODEL_NAME: string = "gpt-4o-mini";
+// Note: DEFAULT_MODEL_NAME is now dynamically determined in the useModels hook
+// but we'll keep a fallback here for type safety
+export const DEFAULT_MODEL_NAME = "deepseek/deepseek-chat";
