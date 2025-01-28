@@ -42,7 +42,7 @@ export function Chat({
     initialMessages,
     onFinish: async (message) => {
       if (message && message.role === "assistant") {
-        await mutate("/api/history");
+        await mutate("/api/chat", undefined, { revalidate: true });
       }
     },
     onError: (error) => {

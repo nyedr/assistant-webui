@@ -43,3 +43,6 @@ yarn-error.log*
 /stories
 
 .npmrc
+
+/data
+data/chat.db

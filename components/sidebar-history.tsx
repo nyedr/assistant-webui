@@ -400,11 +400,15 @@ export function SidebarHistory() {
   const router = useRouter();
 
   const {
-    data: history,
+    data: response,
     isLoading,
     mutate,
-  } = useSWR<Array<Chat>>("/api/history", fetcher, {
-    fallbackData: [],
+  } = useSWR<{
+    data: Array<Chat>;
+    error: string | null;
+    status: number;
+  }>("/api/chat", fetcher, {
+    fallbackData: { data: [], error: null, status: 200 },
     revalidateOnFocus: false,
     revalidateOnReconnect: false,
   });
@@ -433,6 +437,8 @@ export function SidebarHistory() {
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
 
+  const history = response?.data || [];
+
   useEffect(() => {
     if (pathname === "/") {
       mutate();
@@ -443,16 +449,29 @@ export function SidebarHistory() {
   const handleDelete = async () => {
     if (!deleteTarget) return;
 
-    const deletePromise = fetch(
-      `/api/${deleteTarget.type}s?id=${deleteTarget.id}`,
-      { method: "DELETE" }
-    );
+    const endpoint = deleteTarget.type === "chat" ? "chat" : "folders";
+    const deletePromise = fetch(`/api/${endpoint}?id=${deleteTarget.id}`, {
+      method: "DELETE",
+    }).then(async (res) => {
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || "Failed to delete");
+      }
+      return res.json();
+    });
 
     toast.promise(deletePromise, {
       loading: `Deleting ${deleteTarget.type}...`,
       success: () => {
         if (deleteTarget.type === "chat") {
-          mutate((history) => history?.filter((h) => h.id !== deleteTarget.id));
+          mutate((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  data: prev.data.filter((h) => h.id !== deleteTarget.id),
+                }
+              : prev
+          );
           if (deleteTarget.id === id) {
             router.push("/");
           }
@@ -468,7 +487,7 @@ export function SidebarHistory() {
         }
         return `${deleteTarget.type} deleted successfully`;
       },
-      error: `Failed to delete ${deleteTarget.type}`,
+      error: (err) => `Failed to delete ${deleteTarget.type}: ${err.message}`,
     });
 
     setShowDeleteDialog(false);
