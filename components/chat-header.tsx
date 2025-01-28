@@ -1,26 +1,17 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useWindowSize } from "usehooks-ts";
 
 import { ModelSelector } from "@/components/model-selector";
 import { SidebarToggle } from "@/components/sidebar-toggle";
 import { Button } from "@/components/ui/button";
-import { PlusIcon, VercelIcon } from "./icons";
+import { PlusIcon } from "./icons";
 import { useSidebar } from "./ui/sidebar";
 import { memo } from "react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
-function PureChatHeader({
-  chatId,
-  selectedModelId,
-  isReadonly,
-}: {
-  chatId: string;
-  selectedModelId: string;
-  isReadonly: boolean;
-}) {
+function PureChatHeader({ selectedModelId }: { selectedModelId: string }) {
   const router = useRouter();
   const { open } = useSidebar();
 
@@ -28,7 +19,7 @@ function PureChatHeader({
 
   return (
     <header className="flex sticky top-0 bg-background py-1.5 items-center px-2 md:px-2 gap-2">
-      <SidebarToggle />
+      {!open && <SidebarToggle variant="ghost" />}
 
       {(!open || windowWidth < 768) && (
         <Tooltip>
@@ -49,12 +40,10 @@ function PureChatHeader({
         </Tooltip>
       )}
 
-      {!isReadonly && (
-        <ModelSelector
-          selectedModelId={selectedModelId}
-          className="order-1 md:order-2"
-        />
-      )}
+      <ModelSelector
+        selectedModelId={selectedModelId}
+        className="order-1 md:order-2"
+      />
     </header>
   );
 }

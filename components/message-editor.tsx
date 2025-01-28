@@ -1,31 +1,26 @@
-'use client';
+"use client";
 
-import { ChatRequestOptions, Message } from 'ai';
-import { Button } from './ui/button';
-import { Dispatch, SetStateAction, useEffect, useRef, useState } from 'react';
-import { Textarea } from './ui/textarea';
-import { deleteTrailingMessages } from '@/app/(chat)/actions';
-import { toast } from 'sonner';
-import { useUserMessageId } from '@/hooks/use-user-message-id';
+import { Button } from "./ui/button";
+import { useEffect, useRef, useState } from "react";
+import { Textarea } from "./ui/textarea";
+import { deleteTrailingMessages } from "@/app/(chat)/actions";
+import { ChatMessage } from "@/hooks/use-chat";
 
-export type MessageEditorProps = {
-  message: Message;
-  setMode: Dispatch<SetStateAction<'view' | 'edit'>>;
+interface MessageEditorProps {
+  message: ChatMessage;
+  setIsEditing: (isEditing: boolean) => void;
   setMessages: (
-    messages: Message[] | ((messages: Message[]) => Message[]),
+    messages: ChatMessage[] | ((messages: ChatMessage[]) => ChatMessage[])
   ) => void;
-  reload: (
-    chatRequestOptions?: ChatRequestOptions,
-  ) => Promise<string | null | undefined>;
-};
+  reload: () => Promise<void>;
+}
 
-export function MessageEditor({
+export const MessageEditor = ({
   message,
-  setMode,
+  setIsEditing,
   setMessages,
   reload,
-}: MessageEditorProps) {
-  const { userMessageIdFromServer } = useUserMessageId();
+}: MessageEditorProps) => {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   const [draftContent, setDraftContent] = useState<string>(message.content);
@@ -39,8 +34,10 @@ export function MessageEditor({
 
   const adjustHeight = () => {
     if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = `${textareaRef.current.scrollHeight + 2}px`;
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = `${
+        textareaRef.current.scrollHeight + 2
+      }px`;
     }
   };
 
@@ -63,7 +60,7 @@ export function MessageEditor({
           variant="outline"
           className="h-fit py-2 px-3"
           onClick={() => {
-            setMode('view');
+            setIsEditing(false);
           }}
         >
           Cancel
@@ -74,16 +71,9 @@ export function MessageEditor({
           disabled={isSubmitting}
           onClick={async () => {
             setIsSubmitting(true);
-            const messageId = userMessageIdFromServer ?? message.id;
-
-            if (!messageId) {
-              toast.error('Something went wrong, please try again!');
-              setIsSubmitting(false);
-              return;
-            }
 
             await deleteTrailingMessages({
-              id: messageId,
+              id: message.id,
             });
 
             setMessages((messages) => {
@@ -101,13 +91,13 @@ export function MessageEditor({
               return messages;
             });
 
-            setMode('view');
+            setIsEditing(false);
             reload();
           }}
         >
-          {isSubmitting ? 'Sending...' : 'Send'}
+          {isSubmitting ? "Sending..." : "Send"}
         </Button>
       </div>
     </div>
   );
-}
+};

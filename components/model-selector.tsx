@@ -3,7 +3,6 @@
 import { startTransition, useMemo, useOptimistic, useState } from "react";
 import { Command } from "cmdk";
 
-import { saveModelId } from "@/app/(chat)/actions";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -14,6 +13,7 @@ import { useModels } from "@/lib/ai/models";
 import { cn } from "@/lib/utils";
 
 import { CheckCircleFillIcon, ChevronDownIcon, SearchIcon } from "./icons";
+import { saveModelId } from "@/app/(chat)/actions";
 
 type ModelGroup = {
   provider: string;
@@ -151,7 +151,7 @@ export function ModelSelector({
           <ChevronDownIcon />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="min-w-[300px] p-0">
+      <DropdownMenuContent align="start" className="min-w-[300px] p-0 bg-muted">
         <Command className="w-full">
           <div className="flex items-center border-b p-3">
             <SearchIcon className="mr-2 size-4 shrink-0 opacity-50" />

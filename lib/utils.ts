@@ -1,14 +1,8 @@
-import type {
-  CoreAssistantMessage,
-  CoreMessage,
-  CoreToolMessage,
-  Message,
-  ToolInvocation,
-} from 'ai';
-import { type ClassValue, clsx } from 'clsx';
-import { twMerge } from 'tailwind-merge';
+import { type ClassValue, clsx } from "clsx";
+import { twMerge } from "tailwind-merge";
 
-import type { Message as DBMessage, Document } from '@/lib/db/schema';
+import type { Chat, Document } from "@/lib/db/schema";
+import type { ChatHistory, ChatMessage, ChatRole } from "@/hooks/use-chat";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -24,7 +18,7 @@ export const fetcher = async (url: string) => {
 
   if (!res.ok) {
     const error = new Error(
-      'An error occurred while fetching the data.',
+      "An error occurred while fetching the data."
     ) as ApplicationError;
 
     error.info = await res.json();
@@ -37,188 +31,89 @@ export const fetcher = async (url: string) => {
 };
 
 export function getLocalStorage(key: string) {
-  if (typeof window !== 'undefined') {
-    return JSON.parse(localStorage.getItem(key) || '[]');
+  if (typeof window !== "undefined") {
+    return JSON.parse(localStorage.getItem(key) || "[]");
   }
   return [];
 }
 
 export function generateUUID(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
 }
 
-function addToolMessageToChat({
-  toolMessage,
-  messages,
-}: {
-  toolMessage: CoreToolMessage;
-  messages: Array<Message>;
-}): Array<Message> {
-  return messages.map((message) => {
-    if (message.toolInvocations) {
-      return {
-        ...message,
-        toolInvocations: message.toolInvocations.map((toolInvocation) => {
-          const toolResult = toolMessage.content.find(
-            (tool) => tool.toolCallId === toolInvocation.toolCallId,
-          );
-
-          if (toolResult) {
-            return {
-              ...toolInvocation,
-              state: 'result',
-              result: toolResult.result,
-            };
-          }
-
-          return toolInvocation;
-        }),
-      };
-    }
-
-    return message;
-  });
-}
-
-export function convertToUIMessages(
-  messages: Array<DBMessage>,
-): Array<Message> {
-  return messages.reduce((chatMessages: Array<Message>, message) => {
-    if (message.role === 'tool') {
-      return addToolMessageToChat({
-        toolMessage: message as CoreToolMessage,
-        messages: chatMessages,
-      });
-    }
-
-    let textContent = '';
-    const toolInvocations: Array<ToolInvocation> = [];
-
-    if (typeof message.content === 'string') {
-      textContent = message.content;
-    } else if (Array.isArray(message.content)) {
-      for (const content of message.content) {
-        if (content.type === 'text') {
-          textContent += content.text;
-        } else if (content.type === 'tool-call') {
-          toolInvocations.push({
-            state: 'call',
-            toolCallId: content.toolCallId,
-            toolName: content.toolName,
-            args: content.args,
-          });
-        }
-      }
-    }
-
-    chatMessages.push({
-      id: message.id,
-      role: message.role as Message['role'],
-      content: textContent,
-      toolInvocations,
-    });
-
-    return chatMessages;
-  }, []);
+/**
+ * Validates a UUID string against the standard UUID v4 format
+ * @throws Error if UUID is invalid
+ */
+export function validateUUID(uuid: string): void {
+  if (!uuid || typeof uuid !== "string") {
+    throw new Error("UUID must be a non-empty string");
+  }
+  if (uuid.length !== 36) {
+    throw new Error(`Invalid UUID length: ${uuid.length} characters`);
+  }
+  // Check format: 8-4-4-4-12 with valid hex digits
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      uuid
+    )
+  ) {
+    throw new Error(`Invalid UUID format: ${uuid}`);
+  }
 }
 
 export function sanitizeResponseMessages(
-  messages: Array<CoreToolMessage | CoreAssistantMessage>,
-): Array<CoreToolMessage | CoreAssistantMessage> {
-  const toolResultIds: Array<string> = [];
-
-  for (const message of messages) {
-    if (message.role === 'tool') {
-      for (const content of message.content) {
-        if (content.type === 'tool-result') {
-          toolResultIds.push(content.toolCallId);
-        }
-      }
-    }
-  }
-
-  const messagesBySanitizedContent = messages.map((message) => {
-    if (message.role !== 'assistant') return message;
-
-    if (typeof message.content === 'string') return message;
-
-    const sanitizedContent = message.content.filter((content) =>
-      content.type === 'tool-call'
-        ? toolResultIds.includes(content.toolCallId)
-        : content.type === 'text'
-          ? content.text.length > 0
-          : true,
-    );
-
-    return {
-      ...message,
-      content: sanitizedContent,
-    };
-  });
-
-  return messagesBySanitizedContent.filter(
-    (message) => message.content.length > 0,
-  );
-}
-
-export function sanitizeUIMessages(messages: Array<Message>): Array<Message> {
-  const messagesBySanitizedToolInvocations = messages.map((message) => {
-    if (message.role !== 'assistant') return message;
-
-    if (!message.toolInvocations) return message;
-
-    const toolResultIds: Array<string> = [];
-
-    for (const toolInvocation of message.toolInvocations) {
-      if (toolInvocation.state === 'result') {
-        toolResultIds.push(toolInvocation.toolCallId);
-      }
+  messages: Array<ChatMessage>
+): Array<ChatMessage> {
+  return messages.filter((message) => {
+    if (message.role !== "assistant") {
+      return true;
     }
 
-    const sanitizedToolInvocations = message.toolInvocations.filter(
-      (toolInvocation) =>
-        toolInvocation.state === 'result' ||
-        toolResultIds.includes(toolInvocation.toolCallId),
+    return (
+      message.content.trim().length > 0 ||
+      (Array.isArray(message.tool_calls) && message.tool_calls.length > 0)
     );
-
-    return {
-      ...message,
-      toolInvocations: sanitizedToolInvocations,
-    };
   });
-
-  return messagesBySanitizedToolInvocations.filter(
-    (message) =>
-      message.content.length > 0 ||
-      (message.toolInvocations && message.toolInvocations.length > 0),
-  );
 }
 
-export function getMostRecentUserMessage(messages: Array<CoreMessage>) {
-  const userMessages = messages.filter((message) => message.role === 'user');
-  return userMessages.at(-1);
+export function sanitizeUIMessages(
+  messages: Array<ChatMessage>
+): Array<ChatMessage> {
+  return messages.filter((message) => {
+    if (message.role !== "assistant") {
+      return true;
+    }
+
+    return (
+      message.content.trim().length > 0 ||
+      (Array.isArray(message.tool_calls) && message.tool_calls.length > 0)
+    );
+  });
+}
+
+export function getMostRecentUserMessage(messages: Array<ChatMessage>) {
+  return messages.findLast((message) => message.role === "user");
 }
 
 export function getDocumentTimestampByIndex(
   documents: Array<Document>,
-  index: number,
+  index: number
 ) {
   if (!documents) return new Date();
-  if (index > documents.length) return new Date();
+  if (index >= documents.length) return new Date();
 
   return documents[index].createdAt;
 }
 
-export function getMessageIdFromAnnotations(message: Message) {
-  if (!message.annotations) return message.id;
+export function parseChatFromDB(chat: string): ChatHistory {
+  return JSON.parse(chat);
+}
 
-  const [annotation] = message.annotations;
-  if (!annotation) return message.id;
-
-  // @ts-expect-error messageIdFromServer is not defined in MessageAnnotation
-  return annotation.messageIdFromServer;
+export function parseChatToDB(chat: ChatHistory): string {
+  return JSON.stringify(chat);
 }

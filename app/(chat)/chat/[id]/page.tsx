@@ -1,16 +1,14 @@
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 
-import { auth } from "@/app/(auth)/auth";
 import { Chat } from "@/components/chat";
 import { DEFAULT_MODEL_NAME } from "@/lib/ai/models";
-import { getChatById, getMessagesByChatId } from "@/lib/db/queries";
-import { convertToUIMessages } from "@/lib/utils";
-import { DataStreamHandler } from "@/components/data-stream-handler";
+import { getChatById } from "@/app/(chat)/actions";
+import { parseChatFromDB } from "@/lib/utils";
 
 async function fetchAvailableModels() {
   const baseUrl =
-    process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+    process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8001";
   try {
     const response = await fetch(`${baseUrl}/api/v1/health`);
     if (!response.ok) {
@@ -28,17 +26,29 @@ async function fetchAvailableModels() {
 export default async function Page(props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   const { id } = params;
-  const chat = await getChatById({ id });
 
-  if (!chat) {
+  // Get chat data with proper error handling
+  const chatResult = await getChatById({ id });
+
+  // Handle different response states
+  if (chatResult.status === 404 || !chatResult.data) {
     notFound();
   }
 
-  const session = await auth();
+  if (chatResult.status === 500 || chatResult.error) {
+    throw new Error(chatResult.error || "Failed to load chat");
+  }
 
-  const messagesFromDb = await getMessagesByChatId({
-    id,
-  });
+  if (!chatResult.data.chat) {
+    throw new Error("Chat data is missing");
+  }
+
+  const chat = parseChatFromDB(chatResult.data.chat);
+
+  // Get messages only if we have a valid chat
+  console.log("Chat result:", chat);
+
+  const { messages } = chat;
 
   const cookieStore = await cookies();
   const modelIdFromCookie = cookieStore.get("model-id")?.value;
@@ -47,20 +57,15 @@ export default async function Page(props: { params: Promise<{ id: string }> }) {
   const modelsData = await fetchAvailableModels();
 
   // Determine the selected model ID
-  const selectedModelId = modelsData?.available?.includes(modelIdFromCookie)
-    ? modelIdFromCookie
-    : modelsData?.available?.[0] ?? // Use first available model
-      DEFAULT_MODEL_NAME; // Fallback to default if no models available
+  const selectedModelId =
+    modelIdFromCookie || // Prioritize cookie value
+    (modelsData?.available?.[0] ?? DEFAULT_MODEL_NAME); // Only use default if no cookie
 
   return (
-    <>
-      <Chat
-        id={chat.id}
-        initialMessages={convertToUIMessages(messagesFromDb)}
-        selectedModelId={selectedModelId}
-        isReadonly={session?.user?.id !== chat.userId}
-      />
-      <DataStreamHandler id={id} />
-    </>
+    <Chat
+      id={chatResult.data.id}
+      initialMessages={messages}
+      selectedModelId={selectedModelId}
+    />
   );
 }

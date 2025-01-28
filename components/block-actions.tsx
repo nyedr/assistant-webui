@@ -1,19 +1,19 @@
-import { cn } from '@/lib/utils';
-import { ClockRewind, CopyIcon, RedoIcon, UndoIcon } from './icons';
-import { Button } from './ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
-import { toast } from 'sonner';
-import { ConsoleOutput, UIBlock } from './block';
-import { Dispatch, memo, SetStateAction } from 'react';
-import { RunCodeButton } from './run-code-button';
-import { useMultimodalCopyToClipboard } from '@/hooks/use-multimodal-copy-to-clipboard';
+import { cn } from "@/lib/utils";
+import { ClockRewind, CopyIcon, RedoIcon, UndoIcon } from "./icons";
+import { Button } from "./ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { toast } from "sonner";
+import { ConsoleOutput, UIBlock } from "./block";
+import { Dispatch, memo, SetStateAction } from "react";
+import { RunCodeButton } from "./run-code-button";
+import { useMultimodalCopyToClipboard } from "@/hooks/use-multimodal-copy-to-clipboard";
 
 interface BlockActionsProps {
   block: UIBlock;
-  handleVersionChange: (type: 'next' | 'prev' | 'toggle' | 'latest') => void;
+  handleVersionChange: (type: "next" | "prev" | "toggle" | "latest") => void;
   currentVersionIndex: number;
   isCurrentVersion: boolean;
-  mode: 'read-only' | 'edit' | 'diff';
+  mode: "read-only" | "edit" | "diff";
   setConsoleOutputs: Dispatch<SetStateAction<Array<ConsoleOutput>>>;
 }
 
@@ -30,26 +30,26 @@ function PureBlockActions({
 
   return (
     <div className="flex flex-row gap-1">
-      {block.kind === 'code' && (
+      {block.kind === "code" && (
         <RunCodeButton block={block} setConsoleOutputs={setConsoleOutputs} />
       )}
 
-      {block.kind === 'text' && (
+      {block.kind === "text" && (
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               variant="outline"
               className={cn(
-                'p-2 h-fit !pointer-events-auto dark:hover:bg-zinc-700',
+                "p-2 h-fit !pointer-events-auto dark:hover:bg-zinc-700",
                 {
-                  'bg-muted': mode === 'diff',
-                },
+                  "bg-muted": mode === "diff",
+                }
               )}
               onClick={() => {
-                handleVersionChange('toggle');
+                handleVersionChange("toggle");
               }}
               disabled={
-                block.status === 'streaming' || currentVersionIndex === 0
+                block.status === "streaming" || currentVersionIndex === 0
               }
             >
               <ClockRewind size={18} />
@@ -65,9 +65,9 @@ function PureBlockActions({
             variant="outline"
             className="p-2 h-fit dark:hover:bg-zinc-700 !pointer-events-auto"
             onClick={() => {
-              handleVersionChange('prev');
+              handleVersionChange("prev");
             }}
-            disabled={currentVersionIndex === 0 || block.status === 'streaming'}
+            disabled={currentVersionIndex === 0 || block.status === "streaming"}
           >
             <UndoIcon size={18} />
           </Button>
@@ -81,9 +81,9 @@ function PureBlockActions({
             variant="outline"
             className="p-2 h-fit dark:hover:bg-zinc-700 !pointer-events-auto"
             onClick={() => {
-              handleVersionChange('next');
+              handleVersionChange("next");
             }}
-            disabled={isCurrentVersion || block.status === 'streaming'}
+            disabled={isCurrentVersion || block.status === "streaming"}
           >
             <RedoIcon size={18} />
           </Button>
@@ -97,15 +97,15 @@ function PureBlockActions({
             variant="outline"
             className="p-2 h-fit dark:hover:bg-zinc-700"
             onClick={() => {
-              if (block.kind === 'image') {
+              if (block.kind === "image") {
                 copyImageToClipboard(block.content);
               } else {
                 copyTextToClipboard(block.content);
               }
 
-              toast.success('Copied to clipboard!');
+              toast.success("Copied to clipboard!");
             }}
-            disabled={block.status === 'streaming'}
+            disabled={block.status === "streaming"}
           >
             <CopyIcon size={18} />
           </Button>

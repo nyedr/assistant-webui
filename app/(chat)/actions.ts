@@ -1,14 +1,177 @@
 "use server";
 
-import { type CoreUserMessage, generateText } from "ai";
 import { cookies } from "next/headers";
-
-import { customModel } from "@/lib/ai";
-import { DEFAULT_MODEL_NAME } from "@/lib/ai/models";
+import { and, eq, sql } from "drizzle-orm";
 import {
-  deleteMessagesByChatIdAfterTimestamp,
-  getMessageById,
-} from "@/lib/db/queries";
+  generateUUID,
+  parseChatFromDB,
+  parseChatToDB,
+  validateUUID,
+} from "@/lib/utils";
+import { ChatMessage } from "@/hooks/use-chat";
+import { getDb } from "@/lib/db/init";
+import {
+  chat,
+  document,
+  folder,
+  Suggestion,
+  suggestion,
+} from "@/lib/db/schema";
+
+export async function saveChat({
+  id,
+  title,
+  folder_id = null,
+  meta = {},
+}: {
+  id: string;
+  title: string;
+  folder_id?: string | null;
+  meta?: Record<string, unknown>;
+}) {
+  try {
+    validateUUID(id);
+
+    const db = await getDb();
+    const result = db
+      .insert(chat)
+      .values({
+        id,
+        title: title.substring(0, 100),
+        folder_id,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        chat: parseChatToDB({
+          currentId: null,
+          messages: [],
+        }),
+        meta: JSON.stringify(meta || {}),
+        archived: false,
+      })
+      .run();
+
+    if (!result?.changes) {
+      throw new Error("Failed to insert chat record");
+    }
+
+    return { success: true, id };
+  } catch (error) {
+    console.error("Failed to save chat:", error);
+    throw error;
+  }
+}
+
+export async function getAllChats() {
+  try {
+    const db = await getDb();
+    const chats = db
+      .select({
+        chat: chat,
+        folder: folder,
+      })
+      .from(chat)
+      .leftJoin(folder, eq(chat.folder_id, folder.id))
+      .orderBy(sql`${chat.created_at} DESC`)
+      .all();
+
+    return chats.map(({ chat, folder }) => ({
+      ...chat,
+      folder: folder || null,
+    }));
+  } catch (error) {
+    console.error("Failed to get all chats");
+    throw error;
+  }
+}
+
+export async function getChatById({ id }: { id: string }) {
+  try {
+    validateUUID(id);
+
+    const db = await getDb();
+    const selectedChat = db.select().from(chat).where(eq(chat.id, id)).get();
+
+    if (!selectedChat) {
+      return {
+        data: null,
+        error: new Error("Chat not found"),
+        status: 404,
+      };
+    }
+
+    return {
+      data: selectedChat,
+      error: null,
+      status: 200,
+    };
+  } catch (error) {
+    console.error("Failed to get chat by id:", error);
+    if (error instanceof Error) {
+      return {
+        data: null,
+        error,
+        status: 500,
+      };
+    }
+    return {
+      data: null,
+      error: new Error("Unknown error"),
+      status: 500,
+    };
+  }
+}
+
+export async function deleteChatById(id: string) {
+  try {
+    validateUUID(id);
+
+    const db = await getDb();
+    const result = db.delete(chat).where(eq(chat.id, id)).run();
+
+    if (!result?.changes) {
+      throw new Error("Failed to delete chat");
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error("Failed to delete chat:", error);
+    throw error;
+  }
+}
+
+export async function updateChatHistory({
+  id,
+  history,
+}: {
+  id: string;
+  history: {
+    currentId: string | null;
+    messages: ChatMessage[];
+  };
+}) {
+  try {
+    validateUUID(id);
+
+    const db = await getDb();
+    const result = db
+      .update(chat)
+      .set({
+        chat: parseChatToDB(history),
+        updated_at: new Date().toISOString(),
+      })
+      .where(eq(chat.id, id))
+      .run();
+
+    if (!result?.changes) {
+      throw new Error("Failed to update chat history");
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error("Failed to update chat history:", error);
+    throw error;
+  }
+}
 
 export async function saveModelId(model: string) {
   const cookieStore = await cookies();
@@ -18,30 +181,395 @@ export async function saveModelId(model: string) {
 export async function generateTitleFromUserMessage({
   message,
 }: {
-  message: CoreUserMessage;
+  message: ChatMessage;
 }) {
-  // Use the DEFAULT_MODEL_NAME as fallback
-  const cookieStore = await cookies();
-  const modelId = cookieStore.get("model-id")?.value ?? DEFAULT_MODEL_NAME;
+  try {
+    // const baseUrl =
+    //   process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8001";
 
-  const { text: title } = await generateText({
-    model: customModel(modelId),
-    system: `\n
-    - you will generate a short title based on the first message a user begins a conversation with
-    - ensure it is not more than 80 characters long
-    - the title should be a summary of the user's message
-    - do not use quotes or colons`,
-    prompt: JSON.stringify(message),
-  });
+    // const response = await fetch(`${baseUrl}/api/generate-title`, {
+    //   method: "POST",
+    //   headers: {
+    //     "Content-Type": "application/json",
+    //   },
+    //   body: JSON.stringify({ message: message.content }),
+    // });
 
-  return title;
+    // if (!response.ok) {
+    //   console.warn("Title generation failed, using default title");
+    //   return "New Chat";
+    // }
+
+    // const data = await response.json();
+
+    return "New Chat";
+  } catch (error) {
+    console.warn("Error generating title:", error);
+    return "New Chat"; // Fallback title
+  }
 }
 
 export async function deleteTrailingMessages({ id }: { id: string }) {
-  const [message] = await getMessageById({ id });
+  try {
+    // Get the chat containing the message
+    const chat = await getChatById({ id });
+    if (!chat.data) {
+      throw new Error("Chat not found");
+    }
 
-  await deleteMessagesByChatIdAfterTimestamp({
-    chatId: message.chatId,
-    timestamp: message.createdAt,
-  });
+    const chatData = parseChatFromDB(chat.data.chat);
+    const messageIndex = chatData.messages.findIndex(
+      (msg: ChatMessage) => msg.id === id
+    );
+    if (messageIndex === -1) {
+      throw new Error("Message not found");
+    }
+
+    // Keep only messages up to and including the specified message
+    const updatedMessages = chatData.messages.slice(0, messageIndex + 1);
+
+    // Update chat history with truncated messages
+    await updateChatHistory({
+      id: chat.data.id,
+      history: {
+        messages: updatedMessages,
+        currentId: id,
+      },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error("Failed to delete trailing messages:", error);
+    throw error;
+  }
+}
+
+const MAX_TITLE_CHAR_LENGTH = 100;
+
+export async function createNewChat(title: string) {
+  try {
+    const id = generateUUID();
+
+    // Create the chat in the database
+    await saveChat({
+      id,
+      title: title.substring(0, MAX_TITLE_CHAR_LENGTH), // Limit title length
+      folder_id: null,
+    });
+
+    return { success: true, id };
+  } catch (error) {
+    console.error("Failed to create chat:", error);
+    throw new Error("Failed to create chat");
+  }
+}
+
+export async function updateChatMessages(id: string, messages: ChatMessage[]) {
+  try {
+    validateUUID(id);
+
+    const db = await getDb();
+    const existingChat = db.select().from(chat).where(eq(chat.id, id)).get();
+
+    if (!existingChat) {
+      throw new Error("Chat not found");
+    }
+
+    const updateResult = db
+      .update(chat)
+      .set({
+        chat: parseChatToDB({
+          currentId: messages[messages.length - 1]?.id || null,
+          messages,
+        }),
+        updated_at: new Date().toISOString(),
+      })
+      .where(eq(chat.id, id))
+      .run();
+
+    if (!updateResult?.changes) {
+      throw new Error("Failed to update chat messages");
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error("Failed to update chat messages:", error);
+    throw error;
+  }
+}
+
+export async function saveDocument({
+  id,
+  title,
+  kind,
+  content,
+}: {
+  id: string;
+  title: string;
+  kind: "text" | "code" | "image";
+  content: string;
+}) {
+  try {
+    validateUUID(id);
+    const db = await getDb();
+    const result = db
+      .insert(document)
+      .values({
+        id,
+        title,
+        kind,
+        content,
+        createdAt: new Date().toISOString(),
+      })
+      .run();
+
+    if (!result?.changes) {
+      throw new Error("Failed to save document");
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error("Failed to save document:", error);
+    throw error;
+  }
+}
+
+export async function getDocumentById({ id }: { id: string }) {
+  try {
+    validateUUID(id);
+    const db = await getDb();
+    const doc = db
+      .select()
+      .from(document)
+      .where(eq(document.id, id))
+      .orderBy(sql`${document.createdAt} DESC`)
+      .get();
+
+    return doc ? [doc] : []; // Return array for backward compatibility
+  } catch (error) {
+    console.error("Failed to get document by id:", error);
+    throw error;
+  }
+}
+
+export async function deleteDocumentsByIdAfterTimestamp({
+  id,
+  timestamp,
+}: {
+  id: string;
+  timestamp: Date;
+}) {
+  try {
+    validateUUID(id);
+    const db = await getDb();
+    await db.transaction(async (tx) => {
+      tx.delete(suggestion)
+        .where(
+          and(
+            eq(suggestion.documentId, id),
+            sql`${suggestion.documentCreatedAt} > ${timestamp.toISOString()}`
+          )
+        )
+        .run();
+
+      tx.delete(document)
+        .where(
+          and(
+            eq(document.id, id),
+            sql`${document.createdAt} > ${timestamp.toISOString()}`
+          )
+        )
+        .run();
+    });
+    return { success: true };
+  } catch (error) {
+    console.error("Failed to delete documents:", error);
+    throw error;
+  }
+}
+
+export async function saveSuggestions(suggestions: Array<Suggestion>) {
+  try {
+    const db = await getDb();
+    const suggestionsWithIds = suggestions.map((suggestion) => ({
+      ...suggestion,
+      id: generateUUID(),
+    }));
+
+    const result = db.insert(suggestion).values(suggestionsWithIds).run();
+
+    if (!result?.changes) {
+      throw new Error("Failed to save suggestions");
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error("Failed to save suggestions:", error);
+    throw error;
+  }
+}
+
+export async function getSuggestionsByDocumentId({
+  documentId,
+}: {
+  documentId: string;
+}) {
+  try {
+    validateUUID(documentId);
+    const db = await getDb();
+    return db
+      .select()
+      .from(suggestion)
+      .where(eq(suggestion.documentId, documentId))
+      .all();
+  } catch (error) {
+    console.error("Failed to get suggestions:", error);
+    throw error;
+  }
+}
+
+export async function createFolder(name: string) {
+  try {
+    const id = generateUUID();
+    const db = await getDb();
+
+    const result = db
+      .insert(folder)
+      .values({
+        id,
+        name,
+      })
+      .run();
+
+    if (!result?.changes) {
+      throw new Error("Failed to create folder");
+    }
+
+    return { success: true, id };
+  } catch (error) {
+    console.error("Failed to create folder:", error);
+    throw error;
+  }
+}
+
+export async function getAllFolders() {
+  try {
+    const db = await getDb();
+    const foldersWithChats = db
+      .select({
+        folder: folder,
+        chats: chat,
+      })
+      .from(folder)
+      .leftJoin(chat, eq(folder.id, chat.folder_id))
+      .orderBy(sql`${folder.created_at} DESC`)
+      .all();
+
+    // Group chats by folder
+    const folderMap = new Map();
+
+    foldersWithChats.forEach(({ folder, chats }) => {
+      if (!folderMap.has(folder.id)) {
+        folderMap.set(folder.id, {
+          ...folder,
+          chats: [],
+        });
+      }
+      if (chats) {
+        folderMap.get(folder.id).chats.push(chats);
+      }
+    });
+
+    return Array.from(folderMap.values());
+  } catch (error) {
+    console.error("Failed to get folders:", error);
+    throw error;
+  }
+}
+
+export async function updateFolder({ id, name }: { id: string; name: string }) {
+  try {
+    validateUUID(id);
+    const db = await getDb();
+
+    const result = db
+      .update(folder)
+      .set({
+        name,
+        updated_at: new Date().toISOString(),
+      })
+      .where(eq(folder.id, id))
+      .run();
+
+    if (!result?.changes) {
+      throw new Error("Failed to update folder");
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error("Failed to update folder:", error);
+    throw error;
+  }
+}
+
+export async function deleteFolder(id: string) {
+  try {
+    validateUUID(id);
+    const db = await getDb();
+
+    // First update all chats in this folder to have no folder
+    await db
+      .update(chat)
+      .set({ folder_id: null })
+      .where(eq(chat.folder_id, id))
+      .run();
+
+    // Then delete the folder
+    const result = db.delete(folder).where(eq(folder.id, id)).run();
+
+    if (!result?.changes) {
+      throw new Error("Failed to delete folder");
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error("Failed to delete folder:", error);
+    throw error;
+  }
+}
+
+export async function updateChat({
+  id,
+  title,
+  folder_id,
+  archived,
+}: {
+  id: string;
+  title?: string;
+  folder_id?: string | null;
+  archived?: boolean;
+}) {
+  try {
+    validateUUID(id);
+    const db = await getDb();
+
+    const updates: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (title !== undefined) updates.title = title;
+    if (folder_id !== undefined) updates.folder_id = folder_id;
+    if (archived !== undefined) updates.archived = archived;
+
+    const result = db.update(chat).set(updates).where(eq(chat.id, id)).run();
+
+    if (!result?.changes) {
+      throw new Error("Failed to update chat");
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error("Failed to update chat:", error);
+    throw error;
+  }
 }

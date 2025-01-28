@@ -1,47 +1,59 @@
-'use client';
+"use client";
 
-import type { ChatRequestOptions, Message } from 'ai';
-import cx from 'classnames';
-import { AnimatePresence, motion } from 'framer-motion';
-import { memo, useMemo, useState } from 'react';
+import { ChatMessage, ChatRole } from "@/hooks/use-chat";
+import cx from "classnames";
+import { AnimatePresence, motion } from "framer-motion";
+import { memo, useState, useEffect, useRef } from "react";
 
-import type { Vote } from '@/lib/db/schema';
+import { PencilEditIcon, SparklesIcon } from "./icons";
+import ChatMarkdown from "./markdown";
+import { MessageActions } from "./message-actions";
+import { PreviewAttachment } from "./preview-attachment";
+import equal from "fast-deep-equal";
+import { cn } from "@/lib/utils";
+import { Button } from "./ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { MessageEditor } from "./message-editor";
 
-import { DocumentToolCall, DocumentToolResult } from './document';
-import { PencilEditIcon, SparklesIcon } from './icons';
-import { Markdown } from './markdown';
-import { MessageActions } from './message-actions';
-import { PreviewAttachment } from './preview-attachment';
-import { Weather } from './weather';
-import equal from 'fast-deep-equal';
-import { cn } from '@/lib/utils';
-import { Button } from './ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
-import { MessageEditor } from './message-editor';
-import { DocumentPreview } from './document-preview';
+interface PreviewMessageProps {
+  chatId: string;
+  message: ChatMessage;
+  isLoading: boolean;
+  setMessages: (
+    messages: ChatMessage[] | ((messages: ChatMessage[]) => ChatMessage[])
+  ) => void;
+  reload: () => Promise<void>;
+}
 
 const PurePreviewMessage = ({
   chatId,
   message,
-  vote,
   isLoading,
   setMessages,
   reload,
-  isReadonly,
-}: {
-  chatId: string;
-  message: Message;
-  vote: Vote | undefined;
-  isLoading: boolean;
-  setMessages: (
-    messages: Message[] | ((messages: Message[]) => Message[]),
-  ) => void;
-  reload: (
-    chatRequestOptions?: ChatRequestOptions,
-  ) => Promise<string | null | undefined>;
-  isReadonly: boolean;
-}) => {
-  const [mode, setMode] = useState<'view' | 'edit'>('view');
+}: PreviewMessageProps) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const isMountedRef = useRef(true);
+  const isAssistantMessage = message.role === "assistant";
+  const isUserMessage = message.role === "user";
+
+  console.log("[PreviewMessage] Rendering message:", {
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    isAssistantMessage,
+    isUserMessage,
+  });
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      isMountedRef.current = false;
+    }, 100);
+
+    return () => {
+      clearTimeout(timeout);
+    };
+  }, []);
 
   return (
     <AnimatePresence>
@@ -53,14 +65,14 @@ const PurePreviewMessage = ({
       >
         <div
           className={cn(
-            'flex gap-4 w-full group-data-[role=user]/message:ml-auto group-data-[role=user]/message:max-w-2xl',
+            "flex gap-4 w-full group-data-[role=user]/message:ml-auto group-data-[role=user]/message:max-w-2xl",
             {
-              'w-full': mode === 'edit',
-              'group-data-[role=user]/message:w-fit': mode !== 'edit',
-            },
+              "w-full": isEditing,
+              "group-data-[role=user]/message:w-fit": !isEditing,
+            }
           )}
         >
-          {message.role === 'assistant' && (
+          {isAssistantMessage && (
             <div className="size-8 flex items-center rounded-full justify-center ring-1 shrink-0 ring-border bg-background">
               <div className="translate-y-px">
                 <SparklesIcon size={14} />
@@ -80,16 +92,16 @@ const PurePreviewMessage = ({
               </div>
             )}
 
-            {message.content && mode === 'view' && (
-              <div className="flex flex-row gap-2 items-start">
-                {message.role === 'user' && !isReadonly && (
+            {message.content && !isEditing && (
+              <div className="flex flex-row gap-2 items-start max-w-[712px] group-data-[role=user]/message:justify-end">
+                {isUserMessage && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
                         variant="ghost"
                         className="px-2 h-fit rounded-full text-muted-foreground opacity-0 group-hover/message:opacity-100"
                         onClick={() => {
-                          setMode('edit');
+                          setIsEditing(true);
                         }}
                       >
                         <PencilEditIcon />
@@ -99,105 +111,44 @@ const PurePreviewMessage = ({
                   </Tooltip>
                 )}
 
-                <div
-                  className={cn('flex flex-col gap-4', {
-                    'bg-primary text-primary-foreground px-3 py-2 rounded-xl':
-                      message.role === 'user',
-                  })}
-                >
-                  <Markdown>{message.content as string}</Markdown>
-                </div>
+                {isUserMessage ? (
+                  <div className="user-message">
+                    <ChatMarkdown content={message.content} />
+                  </div>
+                ) : (
+                  <div className="flex flex-col">
+                    <ChatMarkdown content={message.content} />
+                  </div>
+                )}
               </div>
             )}
 
-            {message.content && mode === 'edit' && (
+            {message.content && isEditing && (
               <div className="flex flex-row gap-2 items-start">
                 <div className="size-8" />
 
                 <MessageEditor
                   key={message.id}
                   message={message}
-                  setMode={setMode}
+                  setIsEditing={setIsEditing}
                   setMessages={setMessages}
                   reload={reload}
                 />
               </div>
             )}
 
-            {message.toolInvocations && message.toolInvocations.length > 0 && (
+            {message.tool_calls && (
               <div className="flex flex-col gap-4">
-                {message.toolInvocations.map((toolInvocation) => {
-                  const { toolName, toolCallId, state, args } = toolInvocation;
-
-                  if (state === 'result') {
-                    const { result } = toolInvocation;
-
-                    return (
-                      <div key={toolCallId}>
-                        {toolName === 'getWeather' ? (
-                          <Weather weatherAtLocation={result} />
-                        ) : toolName === 'createDocument' ? (
-                          <DocumentPreview
-                            isReadonly={isReadonly}
-                            result={result}
-                          />
-                        ) : toolName === 'updateDocument' ? (
-                          <DocumentToolResult
-                            type="update"
-                            result={result}
-                            isReadonly={isReadonly}
-                          />
-                        ) : toolName === 'requestSuggestions' ? (
-                          <DocumentToolResult
-                            type="request-suggestions"
-                            result={result}
-                            isReadonly={isReadonly}
-                          />
-                        ) : (
-                          <pre>{JSON.stringify(result, null, 2)}</pre>
-                        )}
-                      </div>
-                    );
-                  }
-                  return (
-                    <div
-                      key={toolCallId}
-                      className={cx({
-                        skeleton: ['getWeather'].includes(toolName),
-                      })}
-                    >
-                      {toolName === 'getWeather' ? (
-                        <Weather />
-                      ) : toolName === 'createDocument' ? (
-                        <DocumentPreview isReadonly={isReadonly} args={args} />
-                      ) : toolName === 'updateDocument' ? (
-                        <DocumentToolCall
-                          type="update"
-                          args={args}
-                          isReadonly={isReadonly}
-                        />
-                      ) : toolName === 'requestSuggestions' ? (
-                        <DocumentToolCall
-                          type="request-suggestions"
-                          args={args}
-                          isReadonly={isReadonly}
-                        />
-                      ) : null}
-                    </div>
-                  );
-                })}
+                {/* TODO: Handle tool calling UI */}
               </div>
             )}
 
-            {!isReadonly && (
-              <MessageActions
-                key={`action-${message.id}`}
-                chatId={chatId}
-                message={message}
-                vote={vote}
-                isLoading={isLoading}
-              />
-            )}
+            <MessageActions
+              key={`action-${message.id}`}
+              chatId={chatId}
+              message={message}
+              isLoading={isLoading}
+            />
           </div>
         </div>
       </motion.div>
@@ -208,23 +159,37 @@ const PurePreviewMessage = ({
 export const PreviewMessage = memo(
   PurePreviewMessage,
   (prevProps, nextProps) => {
+    // Always re-render if loading state changes
     if (prevProps.isLoading !== nextProps.isLoading) return false;
-    if (prevProps.message.content !== nextProps.message.content) return false;
-    if (
-      !equal(
-        prevProps.message.toolInvocations,
-        nextProps.message.toolInvocations,
-      )
-    )
-      return false;
-    if (!equal(prevProps.vote, nextProps.vote)) return false;
 
+    // Always re-render if message content changes
+    if (prevProps.message.content !== nextProps.message.content) {
+      console.log("[PreviewMessage] Re-rendering due to content change:", {
+        prevContent: prevProps.message.content,
+        nextContent: nextProps.message.content,
+      });
+      return false;
+    }
+
+    // Always re-render if tool calls change
+    if (!equal(prevProps.message.tool_calls, nextProps.message.tool_calls)) {
+      console.log("[PreviewMessage] Re-rendering due to tool calls change");
+      return false;
+    }
+
+    // Always re-render if message metadata changes
+    if (!equal(prevProps.message.metadata, nextProps.message.metadata)) {
+      console.log("[PreviewMessage] Re-rendering due to metadata change");
+      return false;
+    }
+
+    console.log("[PreviewMessage] Skipping re-render - no changes detected");
     return true;
-  },
+  }
 );
 
 export const ThinkingMessage = () => {
-  const role = 'assistant';
+  const role: ChatRole = "assistant";
 
   return (
     <motion.div
@@ -235,10 +200,10 @@ export const ThinkingMessage = () => {
     >
       <div
         className={cx(
-          'flex gap-4 group-data-[role=user]/message:px-3 w-full group-data-[role=user]/message:w-fit group-data-[role=user]/message:ml-auto group-data-[role=user]/message:max-w-2xl group-data-[role=user]/message:py-2 rounded-xl',
+          "flex gap-4 group-data-[role=user]/message:px-3 w-full group-data-[role=user]/message:w-fit group-data-[role=user]/message:ml-auto group-data-[role=user]/message:max-w-2xl group-data-[role=user]/message:py-2 rounded-xl",
           {
-            'group-data-[role=user]/message:bg-muted': true,
-          },
+            "group-data-[role=user]/message:bg-muted": true,
+          }
         )}
       >
         <div className="size-8 flex items-center rounded-full justify-center ring-1 shrink-0 ring-border">

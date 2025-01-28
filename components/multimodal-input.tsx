@@ -1,11 +1,5 @@
 "use client";
 
-import type {
-  Attachment,
-  ChatRequestOptions,
-  CreateMessage,
-  Message,
-} from "ai";
 import cx from "classnames";
 import type React from "react";
 import {
@@ -21,13 +15,23 @@ import {
 import { toast } from "sonner";
 import { useLocalStorage, useWindowSize } from "usehooks-ts";
 
-import { sanitizeUIMessages } from "@/lib/utils";
+import { generateUUID, sanitizeUIMessages } from "@/lib/utils";
+import {
+  ChatMessage,
+  CreateMessage,
+  ChatRequestOptions,
+  Attachment,
+} from "@/hooks/use-chat";
+import {
+  createNewChat,
+  generateTitleFromUserMessage,
+  updateChatMessages,
+} from "@/app/(chat)/actions";
 
 import { ArrowUpIcon, PaperclipIcon, StopIcon } from "./icons";
 import { PreviewAttachment } from "./preview-attachment";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
-import { SuggestedActions } from "./suggested-actions";
 import equal from "fast-deep-equal";
 
 function PureMultimodalInput({
@@ -51,18 +55,18 @@ function PureMultimodalInput({
   stop: () => void;
   attachments: Array<Attachment>;
   setAttachments: Dispatch<SetStateAction<Array<Attachment>>>;
-  messages: Array<Message>;
-  setMessages: Dispatch<SetStateAction<Array<Message>>>;
+  messages: Array<ChatMessage>;
+  setMessages: (
+    messages: ChatMessage[] | ((messages: ChatMessage[]) => ChatMessage[])
+  ) => void;
   append: (
-    message: Message | CreateMessage,
+    message: ChatMessage | CreateMessage,
     chatRequestOptions?: ChatRequestOptions
   ) => Promise<string | null | undefined>;
   handleSubmit: (
-    event?: {
-      preventDefault?: () => void;
-    },
+    event?: React.FormEvent<HTMLFormElement>,
     chatRequestOptions?: ChatRequestOptions
-  ) => void;
+  ) => Promise<void>;
   className?: string;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -104,7 +108,6 @@ function PureMultimodalInput({
       adjustHeight();
     }
     // Only run once after hydration
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -119,19 +122,64 @@ function PureMultimodalInput({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadQueue, setUploadQueue] = useState<Array<string>>([]);
 
-  const submitForm = useCallback(() => {
-    window.history.replaceState({}, "", `/chat/${chatId}`);
+  const submitForm = useCallback(async () => {
+    try {
+      let currentChatId = chatId;
 
-    handleSubmit(undefined, {
-      experimental_attachments: attachments,
-    });
+      // Only create new chat if this is the first message
+      if (messages.length === 0) {
+        const title =
+          (await generateTitleFromUserMessage({
+            message: {
+              content: input,
+              role: "user",
+              id: generateUUID(),
+              children_ids: [],
+              files: [],
+              images: [],
+              model: null,
+              parent_id: null,
+              timestamp: Date.now(),
+            },
+          })) ?? "New Chat";
+        const result = await createNewChat(title);
+        if (!result.success) {
+          throw new Error("Failed to create chat");
+        }
+        currentChatId = result.id;
+        window.history.replaceState({}, "", `/chat/${currentChatId}`);
 
-    setAttachments([]);
-    setLocalStorageInput("");
-    resetHeight();
+        // Update chat history after creating chat
+        const userMessage: ChatMessage = {
+          content: input,
+          role: "user",
+          id: generateUUID(),
+          children_ids: [],
+          files: [],
+          images: [],
+          model: null,
+          parent_id: null,
+          timestamp: Date.now(),
+        };
+        await updateChatMessages(currentChatId, [userMessage]);
+      } else {
+        window.history.replaceState({}, "", `/chat/${chatId}`);
+      }
 
-    if (width && width > 768) {
-      textareaRef.current?.focus();
+      await handleSubmit(undefined, {
+        experimental_attachments: attachments,
+      });
+
+      setAttachments([]);
+      setLocalStorageInput("");
+      resetHeight();
+
+      if (width && width > 768) {
+        textareaRef.current?.focus();
+      }
+    } catch (error) {
+      console.error("Error submitting message:", error);
+      toast.error("Failed to send message. Please try again.");
     }
   }, [
     attachments,
@@ -140,9 +188,11 @@ function PureMultimodalInput({
     setLocalStorageInput,
     width,
     chatId,
+    messages.length,
+    input,
   ]);
 
-  const uploadFile = async (file: File) => {
+  const uploadFile = async (file: File): Promise<Attachment | undefined> => {
     const formData = new FormData();
     formData.append("file", file);
 
@@ -155,16 +205,18 @@ function PureMultimodalInput({
       if (response.ok) {
         const data = await response.json();
         const { url, pathname, contentType } = data;
+        const type = contentType.split("/")[0];
 
         return {
           url,
           name: pathname,
-          contentType: contentType,
+          contentType,
+          type,
         };
       }
       const { error } = await response.json();
       toast.error(error);
-    } catch (error) {
+    } catch {
       toast.error("Failed to upload file, please try again!");
     }
   };
@@ -179,7 +231,7 @@ function PureMultimodalInput({
         const uploadPromises = files.map((file) => uploadFile(file));
         const uploadedAttachments = await Promise.all(uploadPromises);
         const successfullyUploadedAttachments = uploadedAttachments.filter(
-          (attachment) => attachment !== undefined
+          (attachment): attachment is Attachment => attachment !== undefined
         );
 
         setAttachments((currentAttachments) => [
@@ -197,12 +249,6 @@ function PureMultimodalInput({
 
   return (
     <div className="relative w-full flex flex-col gap-4">
-      {messages.length === 0 &&
-        attachments.length === 0 &&
-        uploadQueue.length === 0 && (
-          <SuggestedActions append={append} chatId={chatId} />
-        )}
-
       <input
         type="file"
         className="fixed -top-4 -left-4 size-0.5 opacity-0 pointer-events-none"
@@ -225,6 +271,7 @@ function PureMultimodalInput({
                 url: "",
                 name: filename,
                 contentType: "",
+                type: "unknown",
               }}
               isUploading={true}
             />
@@ -295,7 +342,7 @@ function PureAttachmentsButton({
 }) {
   return (
     <Button
-      className="rounded-md rounded-bl-lg p-[7px] h-fit dark:border-zinc-700 hover:dark:bg-zinc-900 hover:bg-zinc-200"
+      className="rounded-md p-2 rounded-bl-lg h-fit dark:border-zinc-700 hover:dark:bg-accent hover:bg-zinc-200"
       onClick={(event) => {
         event.preventDefault();
         fileInputRef.current?.click();
@@ -303,7 +350,7 @@ function PureAttachmentsButton({
       disabled={isLoading}
       variant="ghost"
     >
-      <PaperclipIcon size={14} />
+      <PaperclipIcon size={22} />
     </Button>
   );
 }
@@ -315,7 +362,9 @@ function PureStopButton({
   setMessages,
 }: {
   stop: () => void;
-  setMessages: Dispatch<SetStateAction<Array<Message>>>;
+  setMessages: (
+    messages: ChatMessage[] | ((messages: ChatMessage[]) => ChatMessage[])
+  ) => void;
 }) {
   return (
     <Button
@@ -344,14 +393,14 @@ function PureSendButton({
 }) {
   return (
     <Button
-      className="rounded-full p-1.5 h-fit border dark:border-zinc-600"
+      className="flex cursor-pointer h-8 w-8 items-center justify-center rounded-full transition-colors hover:opacity-70 focus-visible:outline-none focus-visible:outline-black disabled:text-[#f4f4f4] disabled:hover:opacity-100 dark:focus-visible:outline-white bg-black text-white bg-foreground hover:bg-foreground hover:text-black dark:text-black disabled:bg-[#D7D7D7]"
       onClick={(event) => {
         event.preventDefault();
         submitForm();
       }}
       disabled={input.length === 0 || uploadQueue.length > 0}
     >
-      <ArrowUpIcon size={14} />
+      <ArrowUpIcon size={24} />
     </Button>
   );
 }

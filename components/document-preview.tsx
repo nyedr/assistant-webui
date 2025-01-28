@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import {
   memo,
@@ -7,19 +7,19 @@ import {
   useEffect,
   useMemo,
   useRef,
-} from 'react';
-import { BlockKind, UIBlock } from './block';
-import { FileIcon, FullscreenIcon, ImageIcon, LoaderIcon } from './icons';
-import { cn, fetcher } from '@/lib/utils';
-import { Document } from '@/lib/db/schema';
-import { InlineDocumentSkeleton } from './document-skeleton';
-import useSWR from 'swr';
-import { Editor } from './editor';
-import { DocumentToolCall, DocumentToolResult } from './document';
-import { CodeEditor } from './code-editor';
-import { useBlock } from '@/hooks/use-block';
-import equal from 'fast-deep-equal';
-import { ImageEditor } from './image-editor';
+} from "react";
+import { BlockKind, UIBlock } from "./block";
+import { FileIcon, FullscreenIcon, ImageIcon, LoaderIcon } from "./icons";
+import { cn, fetcher } from "@/lib/utils";
+import { Document } from "@/lib/db/schema";
+import { InlineDocumentSkeleton } from "./document-skeleton";
+import useSWR from "swr";
+import { Editor } from "./editor";
+import { DocumentToolCall, DocumentToolResult } from "./document";
+import { CodeEditor } from "./code-editor";
+import { useBlock } from "@/hooks/use-block";
+import equal from "fast-deep-equal";
+import { ImageEditor } from "./image-editor";
 
 interface DocumentPreviewProps {
   isReadonly: boolean;
@@ -79,31 +79,32 @@ export function DocumentPreview({
   }
 
   if (isDocumentsFetching) {
-    return <LoadingSkeleton blockKind={result.kind ?? args.kind} />;
+    return (
+      <LoadingSkeleton blockKind={(result.kind ?? args.kind) as BlockKind} />
+    );
   }
 
   const document: Document | null = previewDocument
     ? previewDocument
-    : block.status === 'streaming'
-      ? {
-          title: block.title,
-          kind: block.kind,
-          content: block.content,
-          id: block.documentId,
-          createdAt: new Date(),
-          userId: 'noop',
-        }
-      : null;
+    : block.status === "streaming"
+    ? {
+        title: block.title,
+        kind: block.kind as BlockKind,
+        content: block.content,
+        id: block.documentId,
+        createdAt: new Date().toISOString(),
+      }
+    : null;
 
-  if (!document) return <LoadingSkeleton blockKind={block.kind} />;
+  if (!document) return <LoadingSkeleton blockKind={block.kind as BlockKind} />;
 
   return (
     <div className="relative w-full cursor-pointer">
       <HitboxLayer hitboxRef={hitboxRef} result={result} setBlock={setBlock} />
       <DocumentHeader
         title={document.title}
-        kind={document.kind}
-        isStreaming={block.status === 'streaming'}
+        kind={document.kind as BlockKind}
+        isStreaming={block.status === "streaming"}
       />
       <DocumentContent document={document} />
     </div>
@@ -123,7 +124,7 @@ const LoadingSkeleton = ({ blockKind }: { blockKind: BlockKind }) => (
         <FullscreenIcon />
       </div>
     </div>
-    {blockKind === 'image' ? (
+    {blockKind === "image" ? (
       <div className="overflow-y-scroll border rounded-b-2xl bg-muted border-t-0 dark:border-zinc-700">
         <div className="animate-pulse h-[257px] bg-muted-foreground/20 w-full" />
       </div>
@@ -149,7 +150,7 @@ const PureHitboxLayer = ({
       const boundingBox = event.currentTarget.getBoundingClientRect();
 
       setBlock((block) =>
-        block.status === 'streaming'
+        block.status === "streaming"
           ? { ...block, isVisible: true }
           : {
               ...block,
@@ -163,10 +164,10 @@ const PureHitboxLayer = ({
                 width: boundingBox.width,
                 height: boundingBox.height,
               },
-            },
+            }
       );
     },
-    [setBlock, result],
+    [setBlock, result]
   );
 
   return (
@@ -207,7 +208,7 @@ const PureDocumentHeader = ({
           <div className="animate-spin">
             <LoaderIcon />
           </div>
-        ) : kind === 'image' ? (
+        ) : kind === "image" ? (
           <ImageIcon />
         ) : (
           <FileIcon />
@@ -230,15 +231,15 @@ const DocumentContent = ({ document }: { document: Document }) => {
   const { block } = useBlock();
 
   const containerClassName = cn(
-    'h-[257px] overflow-y-scroll border rounded-b-2xl dark:bg-muted border-t-0 dark:border-zinc-700',
+    "h-[257px] overflow-y-scroll border rounded-b-2xl dark:bg-muted border-t-0 dark:border-zinc-700",
     {
-      'p-4 sm:px-14 sm:py-16': document.kind === 'text',
-      'p-0': document.kind === 'code',
-    },
+      "p-4 sm:px-14 sm:py-16": document.kind === "text",
+      "p-0": document.kind === "code",
+    }
   );
 
   const commonProps = {
-    content: document.content ?? '',
+    content: document.content ?? "",
     isCurrentVersion: true,
     currentVersionIndex: 0,
     status: block.status,
@@ -248,18 +249,18 @@ const DocumentContent = ({ document }: { document: Document }) => {
 
   return (
     <div className={containerClassName}>
-      {document.kind === 'text' ? (
+      {document.kind === "text" ? (
         <Editor {...commonProps} />
-      ) : document.kind === 'code' ? (
+      ) : document.kind === "code" ? (
         <div className="flex flex-1 relative w-full">
           <div className="absolute inset-0">
             <CodeEditor {...commonProps} />
           </div>
         </div>
-      ) : document.kind === 'image' ? (
+      ) : document.kind === "image" ? (
         <ImageEditor
           title={document.title}
-          content={document.content ?? ''}
+          content={document.content ?? ""}
           isCurrentVersion={true}
           currentVersionIndex={0}
           status={block.status}
