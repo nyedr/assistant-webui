@@ -4,18 +4,15 @@ import { motion } from "framer-motion";
 import { Button } from "./ui/button";
 import { memo } from "react";
 import { toast } from "sonner";
-import {
-  ChatMessage,
-  ChatRequestOptions,
-  CreateMessage,
-} from "@/hooks/use-chat";
+
 import { createNewChat, updateChatMessages } from "@/app/(chat)/actions";
 import { generateUUID } from "@/lib/utils";
-
+import { ChatRequestOptions } from "ai";
+import { CreateMessage, Message } from "ai";
 interface SuggestedActionsProps {
   chatId: string;
   append: (
-    message: ChatMessage | CreateMessage,
+    message: Message | CreateMessage,
     chatRequestOptions?: ChatRequestOptions
   ) => Promise<string | null | undefined>;
 }
@@ -66,16 +63,10 @@ function PureSuggestedActions({ chatId, append }: SuggestedActionsProps) {
                 }
                 window.history.replaceState({}, "", `/chat/${result.id}`);
 
-                const userMessage: ChatMessage = {
+                const userMessage: Message = {
                   content: suggestedAction.action,
-                  role: "user",
                   id: generateUUID(),
-                  children_ids: [],
-                  files: [],
-                  images: [],
-                  model: null,
-                  parent_id: null,
-                  timestamp: Date.now(),
+                  role: "user",
                 };
 
                 await updateChatMessages(result.id, [userMessage]);

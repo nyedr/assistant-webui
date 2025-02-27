@@ -20,7 +20,7 @@ export const createTestDb = () => {
     CREATE TABLE IF NOT EXISTS chat (
       id TEXT PRIMARY KEY NOT NULL,
       title TEXT NOT NULL,
-      chat TEXT NOT NULL DEFAULT '{"history":{"currentId":null,"messages":[]}}',
+      chat TEXT NOT NULL DEFAULT '{"currentId":null,"messages":[]}',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       archived INTEGER NOT NULL DEFAULT 0,
@@ -48,9 +48,9 @@ export const createTestDb = () => {
       FOREIGN KEY (documentId) REFERENCES document(id)
     );
 
-    CREATE INDEX IF NOT EXISTS idx_chat_created_at ON chat(created_at);
-    CREATE INDEX IF NOT EXISTS idx_chat_updated_at ON chat(updated_at);
-    CREATE INDEX IF NOT EXISTS idx_chat_folder_id ON chat(folder_id);
+    CREATE INDEX IF NOT EXISTS idx_NEXT_PUBLIC_CHAT_created_at ON chat(created_at);
+    CREATE INDEX IF NOT EXISTS idx_NEXT_PUBLIC_CHAT_updated_at ON chat(updated_at);
+    CREATE INDEX IF NOT EXISTS idx_NEXT_PUBLIC_CHAT_folder_id ON chat(folder_id);
   `);
 
   return drizzle(sqlite, { schema });

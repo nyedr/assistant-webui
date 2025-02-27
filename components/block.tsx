@@ -29,12 +29,9 @@ import { useSidebar } from "./ui/sidebar";
 import { useBlock } from "@/hooks/use-block";
 import equal from "fast-deep-equal";
 import { ImageEditor } from "./image-editor";
-import {
-  Attachment,
-  ChatMessage,
-  ChatRequestOptions,
-  CreateMessage,
-} from "@/hooks/use-chat";
+import { ChatRequestOptions, Message } from "ai";
+import { CreateMessage } from "ai";
+import { Attachment } from "ai";
 
 export type BlockKind = "text" | "code" | "image";
 
@@ -64,6 +61,32 @@ export interface ConsoleOutput {
   contents: Array<ConsoleOutputContent>;
 }
 
+interface BlockProps {
+  chatId: string;
+  input: string;
+  setInput: (value: string) => void;
+  isLoading: boolean;
+  stop: () => void;
+  attachments: Attachment[];
+  setAttachments: Dispatch<SetStateAction<Attachment[]>>;
+  handleSubmit: (
+    event?: React.FormEvent,
+    options?: Record<string, unknown>
+  ) => Promise<void>;
+  append: (
+    message: Message | CreateMessage,
+    chatRequestOptions?: ChatRequestOptions
+  ) => Promise<string | null | undefined>;
+  messages: Message[];
+  setMessages: (
+    messages: Message[] | ((messages: Message[]) => Message[])
+  ) => void;
+  reload: (
+    chatRequestOptions?: ChatRequestOptions
+  ) => Promise<string | null | undefined>;
+  className?: string;
+}
+
 function PureBlock({
   chatId,
   input,
@@ -77,26 +100,7 @@ function PureBlock({
   messages,
   setMessages,
   reload,
-}: {
-  chatId: string;
-  input: string;
-  setInput: (input: string) => void;
-  isLoading: boolean;
-  stop: () => void;
-  attachments: Array<Attachment>;
-  setAttachments: Dispatch<SetStateAction<Array<Attachment>>>;
-  messages: Array<ChatMessage>;
-  setMessages: Dispatch<SetStateAction<Array<ChatMessage>>>;
-  append: (
-    message: ChatMessage | CreateMessage,
-    chatRequestOptions?: ChatRequestOptions
-  ) => Promise<string | null | undefined>;
-  handleSubmit: (
-    event?: React.FormEvent<HTMLFormElement>,
-    chatRequestOptions?: ChatRequestOptions
-  ) => Promise<void>;
-  reload: () => Promise<void>;
-}) {
+}: BlockProps) {
   const { block, setBlock } = useBlock();
 
   const {
@@ -339,7 +343,6 @@ function PureBlock({
                     setAttachments={setAttachments}
                     messages={messages}
                     append={append}
-                    className="bg-background dark:bg-muted"
                     setMessages={setMessages}
                   />
                 </form>

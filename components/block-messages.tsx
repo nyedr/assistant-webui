@@ -2,16 +2,18 @@ import { PreviewMessage } from "./message";
 import { useScrollToBottom } from "./use-scroll-to-bottom";
 import { memo } from "react";
 import { UIBlock } from "./block";
-import { ChatMessage } from "@/hooks/use-chat";
+import { ChatRequestOptions, Message } from "ai";
 
 interface BlockMessagesProps {
   chatId: string;
   isLoading: boolean;
-  messages: Array<ChatMessage>;
+  messages: Array<Message>;
   setMessages: (
-    messages: ChatMessage[] | ((messages: ChatMessage[]) => ChatMessage[])
+    messages: Message[] | ((messages: Message[]) => Message[])
   ) => void;
-  reload: () => Promise<void>;
+  reload: (
+    chatRequestOptions?: ChatRequestOptions
+  ) => Promise<string | null | undefined>;
   blockStatus: UIBlock["status"];
 }
 
@@ -27,7 +29,7 @@ function PureBlockMessages({
 
   return (
     <div
-      // ref={messagesContainerRef}
+      ref={messagesContainerRef}
       className="flex flex-col gap-4 h-full items-center overflow-y-scroll px-4 pt-20"
     >
       {messages.map((message, index) => (

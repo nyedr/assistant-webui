@@ -2,7 +2,6 @@
 
 import { useRouter } from "next/navigation";
 
-import { PlusIcon } from "@/components/icons";
 import { SidebarHistory } from "@/components/sidebar-history";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,6 +13,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { SidebarToggle } from "./sidebar-toggle";
+import { SquarePen } from "lucide-react";
 
 export function AppSidebar() {
   const router = useRouter();
@@ -24,20 +24,19 @@ export function AppSidebar() {
       <SidebarHeader>
         <SidebarMenu>
           <div className="flex flex-row justify-between items-center">
-            <SidebarToggle variant="ghost" />
+            <SidebarToggle className="px-3" variant="ghost" />
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
+                  className="px-3"
                   variant="ghost"
-                  type="button"
-                  className="p-2 h-fit"
                   onClick={() => {
                     setOpenMobile(false);
                     router.push("/");
                     router.refresh();
                   }}
                 >
-                  <PlusIcon />
+                  <SquarePen className="w-5 h-5" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent align="end">New Chat</TooltipContent>

@@ -6,6 +6,7 @@
   --foreground-rgb: 0, 0, 0;
   --background-start-rgb: 214, 219, 220;
   --background-end-rgb: 255, 255, 255;
+  scroll-behavior: smooth;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -78,7 +79,7 @@
     --secondary: 0, 0%, 9%; /* darker grays */
     --secondary-foreground: 0, 0%, 92.55%;
     --muted: 0, 0%, 18%;
-    --muted-foreground: 234 10% 80%;
+    --muted-foreground: 0 0% 70.59%;
     --accent: 0, 0%, 26%;
     --accent-foreground: 0, 0%, 92.55%;
 
@@ -318,4 +319,340 @@ blockquote p {
 
 .user-message .acss-9haghp p {
   @apply my-0;
+}
+
+/* Assistant Message Markdown Styles */
+/* Make sure assistant message content isn't truncated */
+[data-role="assistant"] .markdown,
+[data-role="assistant"] .acss-o9rpbl.markdown,
+[data-role="assistant"] .acss-14pe1av.markdown {
+  @apply max-w-none overflow-visible w-full text-foreground;
+  max-width: none !important;
+  white-space: normal !important;
+  /* Ensure text doesn't get cut off */
+  overflow-wrap: break-word !important;
+  word-wrap: break-word !important;
+  hyphens: auto !important;
+}
+
+/* Fix the content div inside the markdown component */
+[data-role="assistant"] div[data-full-content],
+[data-role="assistant"] .acss-o9rpbl,
+[data-role="assistant"] .acss-14pe1av {
+  @apply w-full overflow-visible;
+  white-space: normal !important;
+  max-width: none !important;
+}
+
+/* Fix all inner elements */
+[data-role="assistant"] .acss-9haghp {
+  @apply w-full overflow-visible break-words;
+  white-space: normal !important;
+  overflow-wrap: break-word !important;
+  word-wrap: break-word !important;
+  word-break: normal !important;
+  max-width: none !important;
+  /* Prevent CSS ellipsis truncation */
+  text-overflow: clip !important;
+}
+
+/* Ensure all direct children have proper text wrapping */
+[data-role="assistant"] .acss-9haghp > * {
+  @apply w-full overflow-visible break-words whitespace-normal;
+  overflow-wrap: break-word !important;
+  word-wrap: break-word !important;
+  max-width: none !important;
+  /* Prevent any truncation */
+  text-overflow: clip !important;
+}
+
+/* Target specific elements that might truncate text */
+[data-role="assistant"] .acss-9haghp p,
+[data-role="assistant"] .acss-9haghp div,
+[data-role="assistant"] .acss-9haghp span,
+[data-role="assistant"] .acss-9haghp code,
+[data-role="assistant"] .acss-9haghp pre {
+  @apply whitespace-normal break-words;
+  overflow-wrap: break-word !important;
+  word-wrap: break-word !important;
+  white-space: pre-wrap !important;
+  max-width: none !important;
+}
+
+/* Assistant Message class styles */
+.assistant-message {
+  width: 100% !important;
+  max-width: none !important;
+  overflow-wrap: break-word !important;
+  word-wrap: break-word !important;
+  white-space: normal !important;
+}
+
+.assistant-message pre,
+.assistant-message code {
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+  overflow-wrap: break-word !important;
+  max-width: 100% !important;
+}
+
+/* Ensure code blocks in assistant messages are scrollable rather than overflowing */
+.assistant-message pre {
+  overflow-x: auto !important;
+}
+
+/* Apply styles to force full width on inner lobe UI components */
+.assistant-message .markdown-body,
+.assistant-message .lobe-markdown,
+.assistant-message [class^="acss-"] {
+  width: 100% !important;
+  max-width: none !important;
+  overflow-wrap: break-word !important;
+  word-wrap: break-word !important;
+  white-space: normal !important;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Markdown styling for AI assistant messages */
+.assistant-message ul,
+.markdown-content ul {
+  list-style-type: disc;
+  padding-left: 1.5rem;
+  margin: 0.75rem 0;
+}
+
+.assistant-message ol,
+.markdown-content ol {
+  list-style-type: decimal;
+  padding-left: 1.5rem;
+  margin: 0.75rem 0;
+}
+
+.assistant-message li,
+.markdown-content li {
+  margin: 0.25rem 0;
+  padding-left: 0.25rem;
+}
+
+.assistant-message li > ul,
+.assistant-message li > ol,
+.markdown-content li > ul,
+.markdown-content li > ol {
+  margin: 0.25rem 0;
+}
+
+.assistant-message p,
+.markdown-content p {
+  margin: 0.5rem 0;
+}
+
+.assistant-message h1,
+.assistant-message h2,
+.assistant-message h3,
+.assistant-message h4,
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4 {
+  font-weight: 600;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.assistant-message blockquote,
+.markdown-content blockquote {
+  border-left: 3px solid #e5e7eb;
+  padding-left: 1rem;
+  font-style: italic;
+  margin: 0.75rem 0;
+}
+
+/* Add proper spacing around markdown lists */
+.markdown-container ul,
+.markdown-container ol {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  padding-left: 1.5rem;
+}
+
+/* Fix for newlines in markdown */
+.markdown-container p + p {
+  margin-top: 1rem;
+}
+
+/* Handle nested lists properly */
+.markdown-container li > ul,
+.markdown-container li > ol {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+/* Ensure proper whitespace for list items */
+.markdown-container li {
+  margin-bottom: 0.25rem;
+}
+
+/* Fix for escaped newlines */
+.markdown-container br {
+  display: block;
+  margin-top: 0.5rem;
+}
+
+/* Fix for markdown rendering */
+.markdown {
+  font-size: 16px;
+  line-height: 1.75;
+  color: var(--foreground);
+}
+
+/* All children of markdown should have a max-width of 3xl */
+.markdown > * {
+  @apply max-w-3xl;
+}
+
+.markdown strong,
+.markdown b {
+  font-weight: 600;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  font-weight: 600;
+  margin: 1rem 0 0.5rem 0;
+}
+
+.markdown h1 {
+  font-size: 2em;
+}
+
+.markdown h2 {
+  font-size: 1.5em;
+}
+
+.markdown h3 {
+  font-size: 1.25em;
+}
+
+.markdown p {
+  margin: 0;
+}
+
+.markdown ul {
+  list-style-type: disc;
+  padding-left: 1.5rem;
+  margin: 0.75rem 0;
+}
+
+.markdown ol {
+  list-style-type: decimal;
+  padding-left: 1.5rem;
+  margin: 0.75rem 0;
+}
+
+.markdown li {
+  margin: 0.33rem 0;
+}
+
+.markdown li > ul,
+.markdown li > ol {
+  margin: 0.25rem 0;
+}
+
+.markdown blockquote {
+  border-left: 3px solid #e5e7eb;
+  padding-left: 1rem;
+  font-style: italic;
+  margin: 0.75rem 0;
+}
+
+/* Fix for numbered list display */
+.acss-9haghp ol {
+  list-style-type: decimal !important;
+  padding-left: 1.5rem !important;
+}
+
+.acss-9haghp ol li {
+  display: list-item !important;
+  margin-left: 0 !important;
+}
+
+.acss-9haghp ol li ol {
+  list-style-type: lower-alpha !important;
+}
+
+.acss-9haghp ol li ol li ol {
+  list-style-type: lower-roman !important;
+}
+
+/* Fix for bullet list display */
+.acss-9haghp ul {
+  list-style-type: disc !important;
+  padding-left: 1.5rem !important;
+}
+
+.acss-9haghp ul li {
+  display: list-item !important;
+  margin-left: 0 !important;
+}
+
+.acss-9haghp ul li ul {
+  list-style-type: circle !important;
+}
+
+.acss-9haghp ul li ul li ul {
+  list-style-type: square !important;
+}
+
+/* Specific container for markdown messages */
+.markdown-message-container {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.markdown-message-container .markdown {
+  width: 100%;
+  overflow-wrap: break-word;
+}
+
+/* Force proper nesting and display of markdown elements */
+.markdown-message-container .markdown ul,
+.markdown-message-container .markdown ol {
+  display: block !important;
+  list-style-position: outside !important;
+}
+
+.markdown-message-container .markdown ul li,
+.markdown-message-container .markdown ol li {
+  display: list-item !important;
+}
+
+.acss-14pe1av ol li::marker,
+.acss-14pe1av ul li::marker {
+  @apply text-foreground;
+}
+
+.markdown .acss-14pe1av ol li li::marker,
+.markdown .acss-14pe1av ul li li::marker {
+  @apply text-muted-foreground !important;
+}
+
+svg {
+  @apply max-w-3xl !important;
+}
+
+.markdown > .acss-14pe1av p {
+  @apply my-0 leading-6;
 }

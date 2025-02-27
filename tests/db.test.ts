@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { generateUUID, parseChatFromDB } from "../lib/utils";
-import { ChatMessage } from "@/hooks/use-chat";
-import { getChatById, saveChat, updateChatHistory } from "@/app/(chat)/actions";
+import { generateUUID, parseChatFromDB, validateUUID } from "../lib/utils";
+import { Message } from "ai";
+import {
+  getChatById,
+  saveChat,
+  updateChatHistory,
+  updateChatMessages,
+} from "@/app/(chat)/actions";
 
 describe("Database Operations", () => {
   describe("Chat Creation Flow", () => {
@@ -27,12 +32,10 @@ describe("Database Operations", () => {
       expect(savedChat.data.id).toBe(chatId);
       expect(savedChat.data.title).toBe(title);
 
-      const chatHistory = JSON.parse(savedChat.data.chat);
+      const chatHistory = parseChatFromDB(savedChat.data.chat);
       expect(chatHistory).toEqual({
-        history: {
-          currentId: null,
-          messages: [],
-        },
+        currentId: null,
+        messages: [],
       });
     });
 
@@ -47,27 +50,27 @@ describe("Database Operations", () => {
         messages: [
           {
             id: "msg1",
-            images: [],
-            files: [],
-            model: "gpt-4",
-            role: "user",
             content: "Hello",
-            parent_id: null,
-            children_ids: ["msg2"],
-            timestamp: Date.now(),
+            createdAt: new Date(1234567890),
+            role: "user",
+            reasoning: "",
+            experimental_attachments: [],
+            data: {},
+            annotations: [],
+            toolInvocations: [],
           },
           {
             id: "msg2",
-            images: [],
-            files: [],
-            model: "gpt-4",
-            role: "assistant",
             content: "Hi there!",
-            parent_id: "msg1",
-            children_ids: [],
-            timestamp: Date.now(),
+            createdAt: new Date(1234567890),
+            role: "assistant",
+            reasoning: "",
+            experimental_attachments: [],
+            data: {},
+            annotations: [],
+            toolInvocations: [],
           },
-        ] as ChatMessage[],
+        ] as Message[],
       };
 
       const updateResult = await updateChatHistory({ id: chatId, history });
@@ -105,7 +108,7 @@ describe("Database Operations", () => {
   describe("UUID Validation", () => {
     it("should validate UUIDs correctly", () => {
       const validId = generateUUID();
-      expect(() => saveChat({ id: validId, title: "Test" })).not.toThrow();
+      expect(() => validateUUID(validId)).not.toThrow();
     });
 
     it("should reject invalid UUIDs in database operations", async () => {
@@ -133,49 +136,49 @@ describe("Database Operations", () => {
         messages: [
           {
             id: "msg1",
-            role: "user",
-            images: [],
-            files: [],
-            model: "gpt-4",
             content: "Initial message",
-            parent_id: null,
-            children_ids: ["msg2a", "msg2b"],
-            timestamp: Date.now(),
+            createdAt: new Date(1234567890),
+            role: "user",
+            reasoning: "",
+            experimental_attachments: [],
+            data: {},
+            annotations: [],
+            toolInvocations: [],
           },
           {
             id: "msg2a",
-            role: "assistant",
-            images: [],
-            files: [],
-            model: "gpt-4",
             content: "First branch",
-            parent_id: "msg1",
-            children_ids: ["msg3"],
-            timestamp: Date.now(),
+            createdAt: new Date(1234567890),
+            role: "assistant",
+            reasoning: "",
+            experimental_attachments: [],
+            data: {},
+            annotations: [],
+            toolInvocations: [],
           },
           {
             id: "msg2b",
-            role: "assistant",
-            images: [],
-            files: [],
-            model: "gpt-4",
             content: "Alternative branch",
-            parent_id: "msg1",
-            children_ids: [],
-            timestamp: Date.now(),
+            createdAt: new Date(1234567890),
+            role: "assistant",
+            reasoning: "",
+            experimental_attachments: [],
+            data: {},
+            annotations: [],
+            toolInvocations: [],
           },
           {
             id: "msg3",
-            role: "user",
-            images: [],
-            files: [],
-            model: "gpt-4",
             content: "Follow-up",
-            parent_id: "msg2a",
-            children_ids: [],
-            timestamp: Date.now(),
+            createdAt: new Date(1234567890),
+            role: "user",
+            reasoning: "",
+            experimental_attachments: [],
+            data: {},
+            annotations: [],
+            toolInvocations: [],
           },
-        ] as ChatMessage[],
+        ] as Message[],
       };
 
       await updateChatHistory({ id: chatId, history });
@@ -188,8 +191,6 @@ describe("Database Operations", () => {
 
       expect(chatHistory.currentId).toBe("msg3");
       expect(chatHistory.messages).toHaveLength(4);
-      expect(chatHistory.messages[0].children_ids).toContain("msg2a");
-      expect(chatHistory.messages[0].children_ids).toContain("msg2b");
     });
 
     it("should maintain chat metadata", async () => {
@@ -206,6 +207,215 @@ describe("Database Operations", () => {
       expect(savedChat.data.updated_at).toBeTruthy();
       expect(savedChat.data.archived).toBe(false); // SQLite boolean value
       expect(JSON.parse(savedChat.data.meta)).toEqual({});
+    });
+  });
+
+  describe("Message Updates via updateChatMessages", () => {
+    let chatId: string;
+
+    beforeEach(async () => {
+      chatId = generateUUID();
+      // Create a test chat
+      await saveChat({ id: chatId, title: "Message Update Test" });
+    });
+
+    it("should save messages array and set currentId correctly", async () => {
+      const messages = [
+        {
+          id: "msg1",
+          content: "User message 1",
+          createdAt: new Date(1234567890),
+          role: "user",
+          reasoning: "",
+          experimental_attachments: [],
+          data: {},
+          annotations: [],
+          toolInvocations: [],
+        },
+        {
+          id: "msg2",
+          content: "Assistant response 1",
+          createdAt: new Date(1234567891),
+          role: "assistant",
+          reasoning: "",
+          experimental_attachments: [],
+          data: {},
+          annotations: [],
+          toolInvocations: [],
+        },
+      ] as Message[];
+
+      // Update messages
+      const result = await updateChatMessages(chatId, messages);
+      expect(result.success).toBe(true);
+
+      // Verify saved data
+      const savedChat = await getChatById({ id: chatId });
+      expect(savedChat.status).toBe(200);
+      expect(savedChat.data).toBeTruthy();
+
+      if (!savedChat.data) {
+        throw new Error("Chat not found");
+      }
+
+      const chatHistory = parseChatFromDB(savedChat.data.chat);
+      expect(chatHistory.currentId).toBe("msg2"); // Should be the last message ID
+      expect(chatHistory.messages).toHaveLength(2);
+      expect(chatHistory.messages[0].role).toBe("user");
+      expect(chatHistory.messages[1].role).toBe("assistant");
+    });
+
+    it("should sanitize message content when saving", async () => {
+      const messages = [
+        {
+          id: "msg1",
+          content: "User message with no formatting",
+          createdAt: new Date(),
+          role: "user",
+          reasoning: "",
+          experimental_attachments: [],
+          data: {},
+          annotations: [],
+          toolInvocations: [],
+        },
+        {
+          id: "msg2",
+          content: "Assistant message with data: [DONE]\n formatting",
+          createdAt: new Date(),
+          role: "assistant",
+          reasoning: "",
+          experimental_attachments: [],
+          data: {},
+          annotations: [],
+          toolInvocations: [],
+        },
+      ] as Message[];
+
+      // Update messages
+      await updateChatMessages(chatId, messages);
+
+      // Verify sanitization
+      const savedChat = await getChatById({ id: chatId });
+      if (!savedChat.data) {
+        throw new Error("Chat not found");
+      }
+
+      const chatHistory = parseChatFromDB(savedChat.data.chat);
+      expect(chatHistory.messages[1].content).toBe(
+        "Assistant message with  formatting"
+      );
+      // The data: [DONE] should be removed
+    });
+
+    it("should handle multiple user messages correctly", async () => {
+      const messages = [
+        {
+          id: "msg1",
+          content: "First user message",
+          createdAt: new Date(1000),
+          role: "user",
+          reasoning: "",
+          experimental_attachments: [],
+          data: {},
+          annotations: [],
+          toolInvocations: [],
+        },
+        {
+          id: "msg2",
+          content: "First assistant response",
+          createdAt: new Date(2000),
+          role: "assistant",
+          reasoning: "",
+          experimental_attachments: [],
+          data: {},
+          annotations: [],
+          toolInvocations: [],
+        },
+        {
+          id: "msg3",
+          content: "Second user message",
+          createdAt: new Date(3000),
+          role: "user",
+          reasoning: "",
+          experimental_attachments: [],
+          data: {},
+          annotations: [],
+          toolInvocations: [],
+        },
+        {
+          id: "msg4",
+          content: "Second assistant response",
+          createdAt: new Date(4000),
+          role: "assistant",
+          reasoning: "",
+          experimental_attachments: [],
+          data: {},
+          annotations: [],
+          toolInvocations: [],
+        },
+      ] as Message[];
+
+      // Save messages
+      await updateChatMessages(chatId, messages);
+
+      // Verify all messages were saved
+      const savedChat = await getChatById({ id: chatId });
+      if (!savedChat.data) {
+        throw new Error("Chat not found");
+      }
+
+      const chatHistory = parseChatFromDB(savedChat.data.chat);
+      expect(chatHistory.messages).toHaveLength(4);
+
+      // Verify user messages
+      const userMessages = chatHistory.messages.filter(
+        (m) => m.role === "user"
+      );
+      expect(userMessages).toHaveLength(2);
+      expect(userMessages[0].content).toBe("First user message");
+      expect(userMessages[1].content).toBe("Second user message");
+
+      // Verify assistant messages
+      const assistantMessages = chatHistory.messages.filter(
+        (m) => m.role === "assistant"
+      );
+      expect(assistantMessages).toHaveLength(2);
+    });
+
+    it("should throw an error when updating non-existent chat", async () => {
+      const nonExistentId = generateUUID();
+      const messages = [
+        {
+          id: "msg1",
+          content: "Test message",
+          createdAt: new Date(),
+          role: "user",
+          reasoning: "",
+          experimental_attachments: [],
+          data: {},
+          annotations: [],
+          toolInvocations: [],
+        },
+      ] as Message[];
+
+      await expect(updateChatMessages(nonExistentId, messages)).rejects.toThrow(
+        "Chat not found"
+      );
+    });
+
+    it("should handle empty messages array", async () => {
+      // It should be valid to update with empty messages
+      const result = await updateChatMessages(chatId, []);
+      expect(result.success).toBe(true);
+
+      const savedChat = await getChatById({ id: chatId });
+      if (!savedChat.data) {
+        throw new Error("Chat not found");
+      }
+
+      const chatHistory = parseChatFromDB(savedChat.data.chat);
+      expect(chatHistory.messages).toHaveLength(0);
+      expect(chatHistory.currentId).toBe(null);
     });
   });
 });

@@ -25,10 +25,8 @@ export const chat = sqliteTable("chat", {
     .notNull()
     .$default(() =>
       JSON.stringify({
-        history: {
-          currentId: null,
-          messages: [],
-        },
+        currentId: null,
+        messages: [],
       })
     ),
   created_at: text("created_at")

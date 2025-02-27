@@ -16,12 +16,7 @@ import { toast } from "sonner";
 import { useLocalStorage, useWindowSize } from "usehooks-ts";
 
 import { generateUUID, sanitizeUIMessages } from "@/lib/utils";
-import {
-  ChatMessage,
-  CreateMessage,
-  ChatRequestOptions,
-  Attachment,
-} from "@/hooks/use-chat";
+
 import {
   createNewChat,
   generateTitleFromUserMessage,
@@ -33,6 +28,7 @@ import { PreviewAttachment } from "./preview-attachment";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import equal from "fast-deep-equal";
+import { ChatRequestOptions, Message, CreateMessage, Attachment } from "ai";
 
 function PureMultimodalInput({
   chatId,
@@ -55,12 +51,12 @@ function PureMultimodalInput({
   stop: () => void;
   attachments: Array<Attachment>;
   setAttachments: Dispatch<SetStateAction<Array<Attachment>>>;
-  messages: Array<ChatMessage>;
+  messages: Array<Message>;
   setMessages: (
-    messages: ChatMessage[] | ((messages: ChatMessage[]) => ChatMessage[])
+    messages: Message[] | ((messages: Message[]) => Message[])
   ) => void;
   append: (
-    message: ChatMessage | CreateMessage,
+    message: Message | CreateMessage,
     chatRequestOptions?: ChatRequestOptions
   ) => Promise<string | null | undefined>;
   handleSubmit: (
@@ -71,6 +67,40 @@ function PureMultimodalInput({
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { width } = useWindowSize();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadQueue, setUploadQueue] = useState<Array<string>>([]);
+
+  console.log("MultimodalInput rendered with chatId:", chatId);
+
+  const adjustHeight = () => {
+    if (textareaRef.current) {
+      // Store the current scroll position
+      const scrollTop = textareaRef.current.scrollTop;
+
+      // Reset height to calculate the actual scrollHeight correctly
+      textareaRef.current.style.height = "auto";
+
+      // Get the scrollHeight (content height)
+      const scrollHeight = textareaRef.current.scrollHeight;
+
+      // Get the maximum height from CSS (75vh converted to pixels)
+      const maxHeight = window.innerHeight * 0.75;
+
+      // Use the lower of scrollHeight or maxHeight for the textarea height
+      const newHeight = Math.min(scrollHeight + 2, maxHeight);
+      textareaRef.current.style.height = `${newHeight}px`;
+
+      // Restore the scroll position
+      textareaRef.current.scrollTop = scrollTop;
+    }
+  };
+
+  const resetHeight = () => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = "44px";
+    }
+  };
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -78,21 +108,12 @@ function PureMultimodalInput({
     }
   }, []);
 
-  const adjustHeight = () => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
-      textareaRef.current.style.height = `${
-        textareaRef.current.scrollHeight + 2
-      }px`;
+  // Adjust height when window resizes
+  useEffect(() => {
+    if (width) {
+      adjustHeight();
     }
-  };
-
-  const resetHeight = () => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
-      textareaRef.current.style.height = "98px";
-    }
-  };
+  }, [width]);
 
   const [localStorageInput, setLocalStorageInput] = useLocalStorage(
     "input",
@@ -115,57 +136,148 @@ function PureMultimodalInput({
   }, [input, setLocalStorageInput]);
 
   const handleInput = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    // Preserve the current cursor position before adjusting
+    const selectionStart = event.target.selectionStart;
+    const selectionEnd = event.target.selectionEnd;
+
     setInput(event.target.value);
     adjustHeight();
-  };
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [uploadQueue, setUploadQueue] = useState<Array<string>>([]);
+    // After React updates the component and adjusts height,
+    // restore the cursor position
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        textareaRef.current.selectionStart = selectionStart;
+        textareaRef.current.selectionEnd = selectionEnd;
+      }
+    });
+  };
 
   const submitForm = useCallback(async () => {
     try {
-      let currentChatId = chatId;
+      // IMPORTANT: Always use the parent's chat ID instead of creating a new one
+      const currentChatId = chatId;
 
-      // Only create new chat if this is the first message
-      if (messages.length === 0) {
-        const title =
-          (await generateTitleFromUserMessage({
-            message: {
-              content: input,
-              role: "user",
-              id: generateUUID(),
-              children_ids: [],
-              files: [],
-              images: [],
-              model: null,
-              parent_id: null,
-              timestamp: Date.now(),
-            },
-          })) ?? "New Chat";
-        const result = await createNewChat(title);
-        if (!result.success) {
-          throw new Error("Failed to create chat");
+      console.log(
+        `submitForm using chatId: ${currentChatId} (existing messages: ${messages.length})`
+      );
+
+      // Create the new user message
+      const newUserMessage: Message = {
+        content: input,
+        role: "user",
+        id: generateUUID(),
+        createdAt: new Date(),
+        reasoning: "",
+        experimental_attachments: attachments,
+        data: {},
+        annotations: [],
+        toolInvocations: [],
+      };
+
+      console.log(`Created new user message with ID: ${newUserMessage.id}`);
+
+      // IMPORTANT: Cache the message in sessionStorage to prevent loss in race conditions
+      try {
+        const tempKey = `temp_messages_${currentChatId}`;
+        let cachedMessages = [];
+        const existingCache = sessionStorage.getItem(tempKey);
+
+        if (existingCache) {
+          cachedMessages = JSON.parse(existingCache);
         }
-        currentChatId = result.id;
-        window.history.replaceState({}, "", `/chat/${currentChatId}`);
 
-        // Update chat history after creating chat
-        const userMessage: ChatMessage = {
-          content: input,
-          role: "user",
-          id: generateUUID(),
-          children_ids: [],
-          files: [],
-          images: [],
-          model: null,
-          parent_id: null,
-          timestamp: Date.now(),
-        };
-        await updateChatMessages(currentChatId, [userMessage]);
-      } else {
-        window.history.replaceState({}, "", `/chat/${chatId}`);
+        if (!Array.isArray(cachedMessages)) {
+          cachedMessages = [];
+        }
+
+        cachedMessages.push(newUserMessage);
+        sessionStorage.setItem(tempKey, JSON.stringify(cachedMessages));
+        console.log(
+          `Cached user message ID ${newUserMessage.id} in sessionStorage`
+        );
+      } catch (e) {
+        console.error("Error caching message in sessionStorage:", e);
       }
 
+      // Only create new chat in the database if this is the first message
+      // but use the same ID that was generated in the parent component
+      if (messages.length === 0) {
+        console.log(
+          `First message - Creating/initializing chat record for ID: ${currentChatId}`
+        );
+        const title =
+          (await generateTitleFromUserMessage({
+            message: newUserMessage,
+          })) ?? "New Chat";
+
+        // Check if this chat already exists in the database
+        try {
+          // First, try to save the initial user message
+          await updateChatMessages(currentChatId, [newUserMessage]);
+          console.log(
+            `Successfully saved first user message to chat ${currentChatId}`
+          );
+        } catch (error) {
+          // If updating fails, the chat might not exist yet, so create it
+          console.log(`Chat ${currentChatId} doesn't exist yet, creating it`);
+          const result = await createNewChat(title, currentChatId);
+          if (!result.success) {
+            throw new Error("Failed to create chat");
+          }
+
+          // Ensure we're using the ID from the parent
+          if (result.id !== currentChatId) {
+            console.warn(
+              `Warning: Created chat ID ${result.id} differs from parent ID ${currentChatId}`
+            );
+          }
+
+          // Add the user message
+          await updateChatMessages(currentChatId, [newUserMessage]);
+          console.log(
+            `Successfully saved first user message after creating chat ${currentChatId}`
+          );
+        }
+      } else {
+        // For non-first messages, we need to be careful to include all existing messages plus the new one
+        console.log(
+          `Adding message to existing chat with ${messages.length} messages`
+        );
+
+        // Get all existing messages and add the new user message
+        const updatedMessages = [...messages, newUserMessage];
+
+        // Log the message sequence to help debug
+        console.log(
+          `Message sequence before saving: ${updatedMessages
+            .map((m) => m.role)
+            .join(", ")}`
+        );
+
+        // Save all messages including the new user message
+        try {
+          await updateChatMessages(currentChatId, updatedMessages);
+          console.log(
+            `Successfully saved ${updatedMessages.length} messages to chat ${currentChatId}`
+          );
+        } catch (error) {
+          console.error("Error saving user message:", error);
+          if (error instanceof Error) {
+            console.error(`Error details: ${error.message}`);
+          }
+          // We'll continue anyway and let the AI response flow proceed
+          console.log(
+            "Continuing despite save error - message will be added to UI state"
+          );
+        }
+      }
+
+      // Set the URL to the current chat ID
+      window.history.replaceState({}, "", `/chat/${currentChatId}`);
+
+      // Finally, submit the message to get the AI response
+      console.log(`Invoking AI with ${attachments.length} attachments`);
       await handleSubmit(undefined, {
         experimental_attachments: attachments,
       });
@@ -179,6 +291,29 @@ function PureMultimodalInput({
       }
     } catch (error) {
       console.error("Error submitting message:", error);
+      if (error instanceof Error) {
+        console.error(`Error details: ${error.message}`);
+        if (error.message.includes("Chat not found")) {
+          console.error(
+            `Chat ID ${chatId} not found in database. This indicates a potential ID mismatch.`
+          );
+
+          // Try to investigate by checking sessionStorage for debug info
+          try {
+            const debugInfo = sessionStorage.getItem(`chatDebug_${chatId}`);
+            if (debugInfo) {
+              console.error(
+                `Previous debug info for chat ${chatId}:`,
+                JSON.parse(debugInfo)
+              );
+            } else {
+              console.error(`No debug info found for chat ${chatId}`);
+            }
+          } catch (e) {
+            console.error("Error retrieving debug info:", e);
+          }
+        }
+      }
       toast.error("Failed to send message. Please try again.");
     }
   }, [
@@ -188,7 +323,7 @@ function PureMultimodalInput({
     setLocalStorageInput,
     width,
     chatId,
-    messages.length,
+    messages,
     input,
   ]);
 
@@ -205,13 +340,11 @@ function PureMultimodalInput({
       if (response.ok) {
         const data = await response.json();
         const { url, pathname, contentType } = data;
-        const type = contentType.split("/")[0];
 
         return {
           url,
           name: pathname,
           contentType,
-          type,
         };
       }
       const { error } = await response.json();
@@ -248,75 +381,156 @@ function PureMultimodalInput({
   );
 
   return (
-    <div className="relative w-full flex flex-col gap-4">
-      <input
-        type="file"
-        className="fixed -top-4 -left-4 size-0.5 opacity-0 pointer-events-none"
-        ref={fileInputRef}
-        multiple
-        onChange={handleFileChange}
-        tabIndex={-1}
-      />
+    <div className="mx-auto text-base px-3 w-full md:px-5 lg:px-4 xl:px-5">
+      <div className="mx-auto flex flex-1 text-base gap-4 md:gap-5 lg:gap-6 md:max-w-3xl">
+        {/* This div is for alignment with other elements in the chat UI */}
+        <div className="flex justify-center empty:hidden"></div>
 
-      {(attachments.length > 0 || uploadQueue.length > 0) && (
-        <div className="flex flex-row gap-2 overflow-x-scroll items-end">
-          {attachments.map((attachment) => (
-            <PreviewAttachment key={attachment.url} attachment={attachment} />
-          ))}
-
-          {uploadQueue.map((filename) => (
-            <PreviewAttachment
-              key={filename}
-              attachment={{
-                url: "",
-                name: filename,
-                contentType: "",
-                type: "unknown",
-              }}
-              isUploading={true}
-            />
-          ))}
-        </div>
-      )}
-
-      <Textarea
-        ref={textareaRef}
-        placeholder="Send a message..."
-        value={input}
-        onChange={handleInput}
-        className={cx(
-          "min-h-[24px] max-h-[calc(75dvh)] overflow-hidden resize-none rounded-2xl !text-base bg-muted pb-10 dark:border-zinc-700",
-          className
-        )}
-        rows={2}
-        autoFocus
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey) {
-            event.preventDefault();
-
-            if (isLoading) {
-              toast.error("Please wait for the model to finish its response!");
-            } else {
+        <form
+          className="w-full"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!isLoading) {
               submitForm();
             }
-          }
-        }}
-      />
+          }}
+        >
+          <div className="relative z-[1] flex h-full max-w-full flex-1 flex-col">
+            <div className="absolute bottom-full left-0 right-0 z-20">
+              {/* Attachments preview area */}
+              {(attachments.length > 0 || uploadQueue.length > 0) && (
+                <div className="flex flex-row gap-2 overflow-x-auto items-end mb-2">
+                  {attachments.map((attachment) => (
+                    <PreviewAttachment
+                      key={attachment.url}
+                      attachment={attachment}
+                    />
+                  ))}
 
-      <div className="absolute bottom-0 p-2 w-fit flex flex-row justify-start">
-        <AttachmentsButton fileInputRef={fileInputRef} isLoading={isLoading} />
-      </div>
+                  {uploadQueue.map((filename) => (
+                    <PreviewAttachment
+                      key={filename}
+                      attachment={{
+                        url: "",
+                        name: filename,
+                        contentType: "",
+                      }}
+                      isUploading={true}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
 
-      <div className="absolute bottom-0 right-0 p-2 w-fit flex flex-row justify-end">
-        {isLoading ? (
-          <StopButton stop={stop} setMessages={setMessages} />
-        ) : (
-          <SendButton
-            input={input}
-            submitForm={submitForm}
-            uploadQueue={uploadQueue}
-          />
-        )}
+            <div className="group relative z-[1] flex w-full items-center">
+              <div className="w-full">
+                <div
+                  id="composer-background"
+                  className="flex w-full cursor-text min-h-[116px] justify-between flex-col rounded-3xl border px-3 py-1 duration-150 ease-in-out shadow-[0_2px_12px_0px_rgba(0,0,0,0.04),_0_9px_9px_0px_rgba(0,0,0,0.01),_0_2px_5px_0px_rgba(0,0,0,0.06)] bg-background dark:bg-[#303030] dark:border-none dark:shadow-none has-[:focus]:shadow-[0_2px_12px_0px_rgba(0,0,0,0.04),_0_9px_9px_0px_rgba(0,0,0,0.01),_0_2px_5px_0px_rgba(0,0,0,0.06)]"
+                  onClick={(event) => {
+                    // Check if the clicked element is not a button
+                    const target = event.target as HTMLElement;
+                    const isButton =
+                      target.tagName === "BUTTON" ||
+                      target.closest("button") !== null;
+
+                    // Only focus the textarea if we're not clicking on a button
+                    if (!isButton && textareaRef.current) {
+                      textareaRef.current.focus();
+                    }
+                  }}
+                >
+                  <div className="flex flex-col justify-start">
+                    <div className="flex min-h-[44px] items-start pl-1">
+                      <div className="min-w-0 max-w-full flex-1">
+                        <Textarea
+                          ref={textareaRef}
+                          placeholder="Ask anything..."
+                          value={input}
+                          onChange={handleInput}
+                          className={cx(
+                            "min-h-[24px] max-h-[calc(75dvh)] overflow-y-auto resize-none !border-0 !shadow-none !bg-transparent !p-0 !py-2 !rounded-none !text-base",
+                            className
+                          )}
+                          rows={1}
+                          autoFocus
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" && !event.shiftKey) {
+                              event.preventDefault();
+
+                              if (isLoading) {
+                                toast.error(
+                                  "Please wait for the model to finish its response!"
+                                );
+                              } else {
+                                submitForm();
+                              }
+                            }
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mb-2 mt-1 flex items-center justify-between sm:mt-2">
+                    <div className="flex gap-x-1.5">
+                      <input
+                        type="file"
+                        className="hidden"
+                        ref={fileInputRef}
+                        multiple
+                        onChange={handleFileChange}
+                        tabIndex={-1}
+                      />
+                      <Button
+                        className="h-9 rounded-full w-9 bg-muted hover:bg-accent"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          fileInputRef.current?.click();
+                        }}
+                        disabled={isLoading}
+                        variant="outline"
+                      >
+                        <PaperclipIcon size={18} />
+                      </Button>
+                    </div>
+
+                    <div className="flex gap-x-1.5">
+                      {isLoading ? (
+                        <Button
+                          className="flex h-9 min-w-9 items-center justify-center rounded-full border border-zinc-200 dark:border-zinc-700 text-token-text-secondary hover:bg-muted dark:hover:bg-zinc-700"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            stop();
+                            setMessages((messages) =>
+                              sanitizeUIMessages(messages)
+                            );
+                          }}
+                          variant="ghost"
+                        >
+                          <StopIcon size={14} />
+                        </Button>
+                      ) : (
+                        <Button
+                          className="flex h-9 w-9 items-center justify-center rounded-full transition-colors focus-visible:outline-none disabled:text-[#f4f4f4] disabled:hover:opacity-100 dark:focus-visible:outline-white bg-black text-white dark:bg-white dark:text-black hover:opacity-70 disabled:bg-[#D7D7D7]"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            submitForm();
+                          }}
+                          disabled={
+                            input.length === 0 || uploadQueue.length > 0
+                          }
+                        >
+                          <ArrowUpIcon size={18} />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </form>
       </div>
     </div>
   );
@@ -332,82 +546,3 @@ export const MultimodalInput = memo(
     return true;
   }
 );
-
-function PureAttachmentsButton({
-  fileInputRef,
-  isLoading,
-}: {
-  fileInputRef: React.MutableRefObject<HTMLInputElement | null>;
-  isLoading: boolean;
-}) {
-  return (
-    <Button
-      className="rounded-md p-2 rounded-bl-lg h-fit dark:border-zinc-700 hover:dark:bg-accent hover:bg-zinc-200"
-      onClick={(event) => {
-        event.preventDefault();
-        fileInputRef.current?.click();
-      }}
-      disabled={isLoading}
-      variant="ghost"
-    >
-      <PaperclipIcon size={22} />
-    </Button>
-  );
-}
-
-const AttachmentsButton = memo(PureAttachmentsButton);
-
-function PureStopButton({
-  stop,
-  setMessages,
-}: {
-  stop: () => void;
-  setMessages: (
-    messages: ChatMessage[] | ((messages: ChatMessage[]) => ChatMessage[])
-  ) => void;
-}) {
-  return (
-    <Button
-      className="rounded-full p-1.5 h-fit border dark:border-zinc-600"
-      onClick={(event) => {
-        event.preventDefault();
-        stop();
-        setMessages((messages) => sanitizeUIMessages(messages));
-      }}
-    >
-      <StopIcon size={14} />
-    </Button>
-  );
-}
-
-const StopButton = memo(PureStopButton);
-
-function PureSendButton({
-  submitForm,
-  input,
-  uploadQueue,
-}: {
-  submitForm: () => void;
-  input: string;
-  uploadQueue: Array<string>;
-}) {
-  return (
-    <Button
-      className="flex cursor-pointer h-8 w-8 items-center justify-center rounded-full transition-colors hover:opacity-70 focus-visible:outline-none focus-visible:outline-black disabled:text-[#f4f4f4] disabled:hover:opacity-100 dark:focus-visible:outline-white bg-black text-white bg-foreground hover:bg-foreground hover:text-black dark:text-black disabled:bg-[#D7D7D7]"
-      onClick={(event) => {
-        event.preventDefault();
-        submitForm();
-      }}
-      disabled={input.length === 0 || uploadQueue.length > 0}
-    >
-      <ArrowUpIcon size={24} />
-    </Button>
-  );
-}
-
-const SendButton = memo(PureSendButton, (prevProps, nextProps) => {
-  if (prevProps.uploadQueue.length !== nextProps.uploadQueue.length)
-    return false;
-  if (prevProps.input !== nextProps.input) return false;
-  return true;
-});

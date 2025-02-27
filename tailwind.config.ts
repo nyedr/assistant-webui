@@ -12,6 +12,16 @@ const config: Config = {
       sans: ["Noto Sans"],
     },
     extend: {
+      animation: {
+        "text-gradient": "text-gradient 1.3s linear infinite",
+      },
+      keyframes: {
+        "text-gradient": {
+          to: {
+            backgroundPosition: "200% center",
+          },
+        },
+      },
       borderRadius: {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",

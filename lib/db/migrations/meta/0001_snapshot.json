@@ -67,16 +67,12 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "chat_folder_id_folder_id_fk": {
-          "name": "chat_folder_id_folder_id_fk",
+        "NEXT_PUBLIC_CHAT_folder_id_folder_id_fk": {
+          "name": "NEXT_PUBLIC_CHAT_folder_id_folder_id_fk",
           "tableFrom": "chat",
           "tableTo": "folder",
-          "columnsFrom": [
-            "folder_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["folder_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -233,12 +229,8 @@
           "name": "suggestion_documentId_document_id_fk",
           "tableFrom": "suggestion",
           "tableTo": "document",
-          "columnsFrom": [
-            "documentId"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["documentId"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }

@@ -35,11 +35,7 @@ import {
   SummarizeIcon,
 } from "./icons";
 import { BlockKind } from "./block";
-import {
-  ChatMessage,
-  ChatRequestOptions,
-  CreateMessage,
-} from "@/hooks/use-chat";
+import { Message, CreateMessage, ChatRequestOptions } from "ai";
 
 type ToolProps = {
   type:
@@ -57,7 +53,7 @@ type ToolProps = {
   setIsToolbarVisible?: Dispatch<SetStateAction<boolean>>;
   isAnimating: boolean;
   append: (
-    message: ChatMessage | CreateMessage,
+    message: Message | CreateMessage,
     chatRequestOptions?: ChatRequestOptions
   ) => Promise<string | null | undefined>;
 };
@@ -185,7 +181,7 @@ const ReadingLevelSelector = ({
   setSelectedTool: Dispatch<SetStateAction<string | null>>;
   isAnimating: boolean;
   append: (
-    message: ChatMessage | CreateMessage,
+    message: Message | CreateMessage,
     chatRequestOptions?: ChatRequestOptions
   ) => Promise<string | null | undefined>;
 }) => {
@@ -345,7 +341,7 @@ export const Tools = ({
   selectedTool: string | null;
   setSelectedTool: Dispatch<SetStateAction<string | null>>;
   append: (
-    message: ChatMessage | CreateMessage,
+    message: Message | CreateMessage,
     chatRequestOptions?: ChatRequestOptions
   ) => Promise<string | null | undefined>;
   isAnimating: boolean;
@@ -405,11 +401,11 @@ const PureToolbar = ({
   setIsToolbarVisible: Dispatch<SetStateAction<boolean>>;
   isLoading: boolean;
   append: (
-    message: ChatMessage | CreateMessage,
+    message: Message | CreateMessage,
     chatRequestOptions?: ChatRequestOptions
   ) => Promise<string | null | undefined>;
   stop: () => void;
-  setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
+  setMessages: Dispatch<SetStateAction<Message[]>>;
   blockKind: BlockKind;
 }) => {
   const toolbarRef = useRef<HTMLDivElement>(null);

@@ -1,5 +1,5 @@
-import { TerminalWindowIcon, LoaderIcon, CrossSmallIcon } from './icons';
-import { Button } from './ui/button';
+import { TerminalWindowIcon, LoaderIcon, CrossSmallIcon } from "./icons";
+import { Button } from "./ui/button";
 import {
   Dispatch,
   SetStateAction,
@@ -7,10 +7,10 @@ import {
   useEffect,
   useRef,
   useState,
-} from 'react';
-import { ConsoleOutput } from './block';
-import { cn } from '@/lib/utils';
-import { useBlockSelector } from '@/hooks/use-block';
+} from "react";
+import { ConsoleOutput } from "./block";
+import { cn } from "@/lib/utils";
+import { useBlockSelector } from "@/hooks/use-block";
 
 interface ConsoleProps {
   consoleOutputs: Array<ConsoleOutput>;
@@ -44,20 +44,31 @@ export function Console({ consoleOutputs, setConsoleOutputs }: ConsoleProps) {
         }
       }
     },
-    [isResizing],
+    [isResizing]
   );
 
   useEffect(() => {
-    window.addEventListener('mousemove', resize);
-    window.addEventListener('mouseup', stopResizing);
+    window.addEventListener("mousemove", resize);
+    window.addEventListener("mouseup", stopResizing);
     return () => {
-      window.removeEventListener('mousemove', resize);
-      window.removeEventListener('mouseup', stopResizing);
+      window.removeEventListener("mousemove", resize);
+      window.removeEventListener("mouseup", stopResizing);
     };
   }, [resize, stopResizing]);
 
   useEffect(() => {
-    consoleEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Only scroll the console if it's visible and has new content
+    if (consoleEndRef.current && consoleOutputs.length > 0) {
+      // Add a small delay to avoid conflicting with other scrolling operations
+      const timer = setTimeout(() => {
+        // Only scroll if user isn't currently interacting with the console
+        if (document.activeElement !== consoleEndRef.current) {
+          consoleEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        }
+      }, 300);
+
+      return () => clearTimeout(timer);
+    }
   }, [consoleOutputs]);
 
   useEffect(() => {
@@ -78,10 +89,10 @@ export function Console({ consoleOutputs, setConsoleOutputs }: ConsoleProps) {
 
       <div
         className={cn(
-          'fixed flex flex-col bottom-0 dark:bg-zinc-900 bg-zinc-50 w-full border-t z-40 overflow-y-scroll overflow-x-hidden dark:border-zinc-700 border-zinc-200',
+          "fixed flex flex-col bottom-0 dark:bg-zinc-900 bg-zinc-50 w-full border-t z-40 overflow-y-scroll overflow-x-hidden dark:border-zinc-700 border-zinc-200",
           {
-            'select-none': isResizing,
-          },
+            "select-none": isResizing,
+          }
         )}
         style={{ height }}
       >
@@ -109,38 +120,38 @@ export function Console({ consoleOutputs, setConsoleOutputs }: ConsoleProps) {
               className="px-4 py-2 flex flex-row text-sm border-b dark:border-zinc-700 border-zinc-200 dark:bg-zinc-900 bg-zinc-50 font-mono"
             >
               <div
-                className={cn('w-12 shrink-0', {
-                  'text-muted-foreground': [
-                    'in_progress',
-                    'loading_packages',
+                className={cn("w-12 shrink-0", {
+                  "text-muted-foreground": [
+                    "in_progress",
+                    "loading_packages",
                   ].includes(consoleOutput.status),
-                  'text-emerald-500': consoleOutput.status === 'completed',
-                  'text-red-400': consoleOutput.status === 'failed',
+                  "text-emerald-500": consoleOutput.status === "completed",
+                  "text-red-400": consoleOutput.status === "failed",
                 })}
               >
                 [{index + 1}]
               </div>
-              {['in_progress', 'loading_packages'].includes(
-                consoleOutput.status,
+              {["in_progress", "loading_packages"].includes(
+                consoleOutput.status
               ) ? (
                 <div className="flex flex-row gap-2">
                   <div className="animate-spin size-fit self-center mb-auto mt-0.5">
                     <LoaderIcon />
                   </div>
                   <div className="text-muted-foreground">
-                    {consoleOutput.status === 'in_progress'
-                      ? 'Initializing...'
-                      : consoleOutput.status === 'loading_packages'
-                        ? consoleOutput.contents.map((content) =>
-                            content.type === 'text' ? content.value : null,
-                          )
-                        : null}
+                    {consoleOutput.status === "in_progress"
+                      ? "Initializing..."
+                      : consoleOutput.status === "loading_packages"
+                      ? consoleOutput.contents.map((content) =>
+                          content.type === "text" ? content.value : null
+                        )
+                      : null}
                   </div>
                 </div>
               ) : (
                 <div className="dark:text-zinc-50 text-zinc-900 w-full flex flex-col gap-2 overflow-x-scroll">
                   {consoleOutput.contents.map((content, index) =>
-                    content.type === 'image' ? (
+                    content.type === "image" ? (
                       <picture key={`${consoleOutput.id}-${index}`}>
                         <img
                           src={content.value}
@@ -155,7 +166,7 @@ export function Console({ consoleOutputs, setConsoleOutputs }: ConsoleProps) {
                       >
                         {content.value}
                       </div>
-                    ),
+                    )
                   )}
                 </div>
               )}

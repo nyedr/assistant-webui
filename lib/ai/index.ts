@@ -1,15 +1,12 @@
-import { ChatMessage } from "@/hooks/use-chat";
-
-// Export the useModels hook for components that need to access model information
-export { useModels } from "./models";
+import { Message } from "ai";
 
 interface ChatMessageRequest {
-  role: ChatMessage["role"];
-  content: ChatMessage["content"];
+  role: Message["role"];
+  content: Message["content"];
   metadata?: Record<string, unknown>;
 }
 
-const chatMessageToRequest = (message: ChatMessage): ChatMessageRequest => {
+const chatMessageToRequest = (message: Message): ChatMessageRequest => {
   return {
     role: message.role,
     content: message.content,
@@ -17,7 +14,7 @@ const chatMessageToRequest = (message: ChatMessage): ChatMessageRequest => {
 };
 
 export interface ChatOptions {
-  messages: Array<ChatMessage>;
+  messages: Array<Message>;
   model?: string;
   temperature?: number;
   stream?: boolean;

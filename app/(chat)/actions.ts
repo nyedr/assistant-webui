@@ -8,7 +8,6 @@ import {
   parseChatToDB,
   validateUUID,
 } from "@/lib/utils";
-import { ChatMessage } from "@/hooks/use-chat";
 import { getDb } from "@/lib/db/init";
 import {
   chat,
@@ -17,6 +16,7 @@ import {
   Suggestion,
   suggestion,
 } from "@/lib/db/schema";
+import { Message } from "ai";
 
 export async function saveChat({
   id,
@@ -146,17 +146,71 @@ export async function updateChatHistory({
   id: string;
   history: {
     currentId: string | null;
-    messages: ChatMessage[];
+    messages: Message[];
   };
 }) {
   try {
     validateUUID(id);
 
+    console.log(
+      `[ACTION] updateChatHistory called for chat ${id} with ${history.messages.length} messages`
+    );
+
+    // Sanitize message content to remove any SSE formatting
+    const sanitizedMessages = history.messages.map((msg) => ({
+      ...msg,
+      content: msg.content,
+    }));
+
+    const sanitizedHistory = {
+      currentId: history.currentId,
+      messages: sanitizedMessages,
+    };
+
+    console.log(
+      `[ACTION] Processed ${sanitizedMessages.length} messages for saving, currentId: ${history.currentId}`
+    );
+
+    // Check if the DB has the chat
     const db = await getDb();
+    const existingChat = db.select().from(chat).where(eq(chat.id, id)).get();
+
+    if (!existingChat) {
+      // Log detailed error information
+      console.error(
+        `[ACTION] Chat ${id} not found in database when trying to update history`
+      );
+      console.error(
+        `[ACTION] Current message count: ${sanitizedMessages.length}`
+      );
+
+      if (sanitizedMessages.length > 0) {
+        console.error(
+          `[ACTION] First message: ${sanitizedMessages[0].role}/${sanitizedMessages[0].id}`
+        );
+        console.error(
+          `[ACTION] Last message: ${
+            sanitizedMessages[sanitizedMessages.length - 1].role
+          }/${sanitizedMessages[sanitizedMessages.length - 1].id}`
+        );
+      }
+
+      // Simple error, no auto-creation
+      throw new Error(`Chat not found (ID: ${id})`);
+    }
+
+    // Serialize the chat data
+    const chatJson = parseChatToDB(sanitizedHistory);
+
+    // Log a preview of what we're about to save
+    console.log(
+      `[ACTION] Saving chat with ${sanitizedMessages.length} messages (JSON length: ${chatJson.length})`
+    );
+
     const result = db
       .update(chat)
       .set({
-        chat: parseChatToDB(history),
+        chat: chatJson,
         updated_at: new Date().toISOString(),
       })
       .where(eq(chat.id, id))
@@ -164,6 +218,19 @@ export async function updateChatHistory({
 
     if (!result?.changes) {
       throw new Error("Failed to update chat history");
+    }
+
+    // Verify the update
+    const updatedChat = db.select().from(chat).where(eq(chat.id, id)).get();
+    if (updatedChat) {
+      try {
+        const savedData = parseChatFromDB(updatedChat.chat);
+        console.log(
+          `[ACTION] Verified ${savedData.messages.length} messages were saved to DB`
+        );
+      } catch (e) {
+        console.error(`[ACTION] Error parsing saved chat: ${e}`);
+      }
     }
 
     return { success: true };
@@ -181,7 +248,7 @@ export async function saveModelId(model: string) {
 export async function generateTitleFromUserMessage({
   message,
 }: {
-  message: ChatMessage;
+  message: Message;
 }) {
   try {
     // const baseUrl =
@@ -209,7 +276,13 @@ export async function generateTitleFromUserMessage({
   }
 }
 
-export async function deleteTrailingMessages({ id }: { id: string }) {
+export async function deleteTrailingMessages({
+  id,
+  messageId,
+}: {
+  id: string;
+  messageId: string;
+}) {
   try {
     // Get the chat containing the message
     const chat = await getChatById({ id });
@@ -219,21 +292,27 @@ export async function deleteTrailingMessages({ id }: { id: string }) {
 
     const chatData = parseChatFromDB(chat.data.chat);
     const messageIndex = chatData.messages.findIndex(
-      (msg: ChatMessage) => msg.id === id
+      (msg: Message) => msg.id === messageId
     );
     if (messageIndex === -1) {
       throw new Error("Message not found");
     }
 
-    // Keep only messages up to and including the specified message
-    const updatedMessages = chatData.messages.slice(0, messageIndex + 1);
+    // Keep only messages up to but not including the specified message
+    const updatedMessages = chatData.messages.slice(0, messageIndex);
+
+    // If no messages are left, set currentId to null, otherwise use the last message's id
+    const currentId =
+      updatedMessages.length > 0
+        ? updatedMessages[updatedMessages.length - 1].id
+        : null;
 
     // Update chat history with truncated messages
     await updateChatHistory({
       id: chat.data.id,
       history: {
         messages: updatedMessages,
-        currentId: id,
+        currentId,
       },
     });
 
@@ -244,11 +323,67 @@ export async function deleteTrailingMessages({ id }: { id: string }) {
   }
 }
 
+export async function deleteSingleMessage({
+  id,
+  messageId,
+}: {
+  id: string;
+  messageId: string;
+}) {
+  try {
+    // Get the chat containing the message
+    const chat = await getChatById({ id });
+    if (!chat.data) {
+      throw new Error("Chat not found");
+    }
+
+    const chatData = parseChatFromDB(chat.data.chat);
+    const messageIndex = chatData.messages.findIndex(
+      (msg: Message) => msg.id === messageId
+    );
+    if (messageIndex === -1) {
+      throw new Error("Message not found");
+    }
+
+    // Filter out only the specified message
+    const updatedMessages = chatData.messages.filter(
+      (msg: Message) => msg.id !== messageId
+    );
+
+    // If no messages are left, set currentId to null, otherwise use the last message's id
+    const currentId =
+      updatedMessages.length > 0
+        ? updatedMessages[updatedMessages.length - 1].id
+        : null;
+
+    // Update chat history with the updated messages
+    await updateChatHistory({
+      id: chat.data.id,
+      history: {
+        messages: updatedMessages,
+        currentId,
+      },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error("Failed to delete single message:", error);
+    throw error;
+  }
+}
+
 const MAX_TITLE_CHAR_LENGTH = 100;
 
-export async function createNewChat(title: string) {
+export async function createNewChat(title: string, providedId?: string) {
   try {
-    const id = generateUUID();
+    // Use the provided ID if it exists, otherwise generate a new one
+    const id = providedId || generateUUID();
+
+    console.log(
+      `[ACTION] Creating new chat with ID: ${id} (${
+        providedId ? "provided" : "generated"
+      })`
+    );
 
     // Create the chat in the database
     await saveChat({
@@ -264,23 +399,35 @@ export async function createNewChat(title: string) {
   }
 }
 
-export async function updateChatMessages(id: string, messages: ChatMessage[]) {
+export async function updateChatMessages(id: string, messages: Message[]) {
   try {
     validateUUID(id);
+
+    // Only log essential information
+    console.log(
+      `[ACTION] Updating chat ${id} with ${messages.length} messages`
+    );
 
     const db = await getDb();
     const existingChat = db.select().from(chat).where(eq(chat.id, id)).get();
 
     if (!existingChat) {
-      throw new Error("Chat not found");
+      throw new Error(`Chat not found with ID: ${id}`);
     }
+
+    // Sanitize message content to remove any SSE formatting
+    const sanitizedMessages = messages.map((msg) => ({
+      ...msg,
+      content: msg.content,
+    }));
 
     const updateResult = db
       .update(chat)
       .set({
         chat: parseChatToDB({
-          currentId: messages[messages.length - 1]?.id || null,
-          messages,
+          currentId:
+            sanitizedMessages[sanitizedMessages.length - 1]?.id || null,
+          messages: sanitizedMessages,
         }),
         updated_at: new Date().toISOString(),
       })

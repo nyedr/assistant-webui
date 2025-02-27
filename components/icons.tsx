@@ -9,9 +9,14 @@ import {
   ArchiveRestore,
   Archive,
   EllipsisVertical,
+  ChartLine,
 } from "lucide-react";
 import { IconBaseProps } from "react-icons/lib";
 import { FaArrowUp } from "react-icons/fa";
+
+export const ChartLineIcon = ({ size = 16, className }: LucideProps) => {
+  return <ChartLine width={size} height={size} className={className} />;
+};
 
 export const SearchIcon = ({
   size = 16,

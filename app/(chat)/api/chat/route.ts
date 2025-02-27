@@ -1,26 +1,13 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
-
 import {
   saveChat,
   getAllChats,
   getChatById,
   deleteChatById,
-  updateChatHistory,
   updateChat,
 } from "@/app/(chat)/actions";
 import { generateUUID } from "@/lib/utils";
-import type { ChatMessage, ChatRole } from "@/hooks/use-chat";
-
-// Enhanced validation schemas
-const messageSchema = z.object({
-  content: z.string(),
-  role: z.enum(["system", "user", "assistant", "tool"] as const),
-  images: z.array(z.string()).optional(),
-  files: z.array(z.string()).optional(),
-});
-
-const messageArraySchema = z.array(messageSchema);
 
 const chatSchema = z.object({
   title: z.string().min(1, "Title is required"),
@@ -90,7 +77,19 @@ export async function POST(request: NextRequest) {
     }
 
     const { title, folder_id, meta } = result.data;
-    const id = generateUUID();
+
+    // Use provided ID if it exists, otherwise generate a new one
+    const id = body.id
+      ? typeof body.id === "string"
+        ? body.id
+        : generateUUID()
+      : generateUUID();
+
+    console.log(
+      `[API] Creating chat with ID: ${id} (${
+        body.id ? "provided" : "generated"
+      })`
+    );
 
     await saveChat({
       id,
@@ -130,37 +129,43 @@ export async function PATCH(request: NextRequest) {
       });
     }
 
-    const messagesResult = messageArraySchema.safeParse(body);
+    // Check if this is a message update request (array of messages or {currentId, messages} object)
+    const isMessageUpdate =
+      Array.isArray(body) || (body.messages && Array.isArray(body.messages));
 
-    if (!messagesResult.success) {
+    // If this is a message update, redirect to the dedicated messages endpoint
+    if (isMessageUpdate) {
+      // Extract the messages array
+      const messages = Array.isArray(body) ? body : body.messages;
+
+      // Forward to the dedicated messages endpoint
+      const messagesResponse = await fetch(
+        `${request.url.split("?")[0]}/messages?id=${chatId}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(messages),
+        }
+      );
+
+      return messagesResponse;
+    }
+
+    // Otherwise, handle regular chat updates (title, folder, etc.)
+    const result = chatUpdateSchema.safeParse(body);
+    if (!result.success) {
       return Response.json({
         data: null,
-        error: messagesResult.error.errors[0].message,
+        error: result.error.errors[0].message,
         status: 400,
       });
     }
 
-    const messages: ChatMessage[] = messagesResult.data.map((message) => ({
-      id: generateUUID(),
-      role: message.role as ChatRole,
-      content: message.content,
-      parent_id: null,
-      children_ids: [],
-      timestamp: Date.now(),
-      model: null,
-      images: message.images || [],
-      files: message.files || [],
-      metadata: {},
-    }));
-
-    const currentId = messages[messages.length - 1].id;
-
-    await updateChatHistory({
+    await updateChat({
       id: chatId,
-      history: {
-        currentId,
-        messages,
-      },
+      ...result.data,
     });
 
     const chat = await getChatById({ id: chatId });
@@ -176,19 +181,6 @@ export async function PATCH(request: NextRequest) {
       error: "Failed to update chat",
       status: 500,
     });
-  }
-}
-
-// Stream response encoder with error handling
-function encodeStreamChunk(data: unknown) {
-  try {
-    return new TextEncoder().encode(JSON.stringify(data) + "\n");
-  } catch (error) {
-    console.error("Error encoding stream chunk:", error);
-    return new TextEncoder().encode(
-      JSON.stringify({ type: "error", content: "Failed to encode chunk" }) +
-        "\n"
-    );
   }
 }
 

@@ -4,15 +4,17 @@ import { Button } from "./ui/button";
 import { useEffect, useRef, useState } from "react";
 import { Textarea } from "./ui/textarea";
 import { deleteTrailingMessages } from "@/app/(chat)/actions";
-import { ChatMessage } from "@/hooks/use-chat";
+import type { ChatRequestOptions, Message } from "ai";
 
 interface MessageEditorProps {
-  message: ChatMessage;
+  message: Message;
   setIsEditing: (isEditing: boolean) => void;
   setMessages: (
-    messages: ChatMessage[] | ((messages: ChatMessage[]) => ChatMessage[])
+    messages: Message[] | ((messages: Message[]) => Message[])
   ) => void;
-  reload: () => Promise<void>;
+  reload: (
+    chatRequestOptions?: ChatRequestOptions
+  ) => Promise<string | null | undefined>;
 }
 
 export const MessageEditor = ({
@@ -74,6 +76,7 @@ export const MessageEditor = ({
 
             await deleteTrailingMessages({
               id: message.id,
+              messageId: message.id,
             });
 
             setMessages((messages) => {
