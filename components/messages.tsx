@@ -1,6 +1,6 @@
 import { PreviewMessage, ThinkingMessage } from "./message";
 import { useScrollToBottom } from "./use-scroll-to-bottom";
-import { memo, useRef, useEffect, useMemo } from "react";
+import { memo, useRef, useEffect } from "react";
 import { ChatRequestOptions, Message } from "ai";
 import { cn } from "@/lib/utils";
 
@@ -29,7 +29,6 @@ function MessagesComponent({
 }: MessagesProps) {
   // Track the previous message count to determine if new messages were added
   const prevMessageCountRef = useRef(messages.length);
-  const latestContentRef = useRef<Record<string, string>>({});
   const [containerRef, endRef, scrollToMessageFn] =
     useScrollToBottom<HTMLDivElement>();
 
@@ -40,7 +39,7 @@ function MessagesComponent({
     }
   }, [scrollToMessageFn, scrollToMessage]);
 
-  // Check if messages were actually added
+  // Auto-scroll when new messages are added
   useEffect(() => {
     const currentMsgCount = messages.length;
     const previousMsgCount = prevMessageCountRef.current;
@@ -58,45 +57,28 @@ function MessagesComponent({
     }
   }, [messages.length, isBlockVisible]);
 
-  // Update ref with latest content
-  useEffect(() => {
-    messages.forEach((msg: Message) => {
-      if (msg.content !== latestContentRef.current[msg.id]) {
-        latestContentRef.current[msg.id] = msg.content;
-      }
-    });
-  }, [messages]);
-
-  // Sanitize message content to remove any SSE formatting
-  const sanitizedMessages = messages.map((msg) => ({
-    ...msg,
-    content: msg.content,
-  }));
-
-  return useMemo(() => {
-    return (
-      <div
-        ref={containerRef}
-        className={cn(
-          "relative m-auto max-w-screen-lg pt-4 flex flex-col gap-5",
-          isBlockVisible && "blur-md"
-        )}
-      >
-        {sanitizedMessages.map((message) => (
-          <PreviewMessage
-            key={message.id}
-            chatId={chatId}
-            message={message}
-            isLoading={isLoading}
-            setMessages={setMessages}
-            reload={reload}
-          />
-        ))}
-        {isLoading && <ThinkingMessage />}
-        <div ref={endRef} className="h-4" />
-      </div>
-    );
-  }, [messages, isLoading, isBlockVisible, chatId, setMessages, reload]);
+  return (
+    <div
+      ref={containerRef}
+      className={cn(
+        "relative m-auto max-w-screen-lg pt-4 flex flex-col gap-5",
+        isBlockVisible && "blur-md"
+      )}
+    >
+      {messages.map((message) => (
+        <PreviewMessage
+          key={message.id}
+          chatId={chatId}
+          message={message}
+          isLoading={isLoading}
+          setMessages={setMessages}
+          reload={reload}
+        />
+      ))}
+      {isLoading && <ThinkingMessage />}
+      <div ref={endRef} className="h-4" />
+    </div>
+  );
 }
 
 export const Messages = memo(MessagesComponent, (prevProps, nextProps) => {
@@ -106,10 +88,10 @@ export const Messages = memo(MessagesComponent, (prevProps, nextProps) => {
 
   // Check if any message content has changed
   const hasContentChanged = prevProps.messages.some((prevMsg, index) => {
+    if (index >= nextProps.messages.length) return true;
     const nextMsg = nextProps.messages[index];
     return prevMsg.content !== nextMsg.content;
   });
-  if (hasContentChanged) return false;
 
-  return true;
+  return !hasContentChanged;
 });

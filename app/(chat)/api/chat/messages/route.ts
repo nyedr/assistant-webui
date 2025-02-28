@@ -46,16 +46,10 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    console.log(`[API] Processing message update for chat ${chatId}`);
-
     // Validate the incoming messages
     const messagesResult = messageArraySchema.safeParse(body);
 
     if (!messagesResult.success) {
-      console.error(
-        "[API] Message validation failed:",
-        messagesResult.error.errors
-      );
       return Response.json({
         data: null,
         error: messagesResult.error.errors[0].message,
@@ -65,90 +59,37 @@ export async function POST(request: NextRequest) {
 
     const incomingMessages = messagesResult.data;
 
-    // Count messages by role for verification and logging
-    const userMessages = incomingMessages.filter((m) => m.role === "user");
-    const assistantMessages = incomingMessages.filter(
-      (m) => m.role === "assistant"
-    );
-
-    console.log(
-      `[API] Received ${incomingMessages.length} messages (${userMessages.length} user, ${assistantMessages.length} assistant)`
-    );
-
-    // For debug, log all message IDs by role
-    if (userMessages.length > 0) {
-      console.log(
-        `[API] User message IDs: ${userMessages.map((m) => m.id).join(", ")}`
-      );
-    }
-
-    if (assistantMessages.length > 0) {
-      console.log(
-        `[API] Assistant message IDs: ${assistantMessages
-          .map((m) => m.id)
-          .join(", ")}`
-      );
-    }
-
-    // IMPORTANT: Check for database messages to ensure we preserve existing messages
+    // Merge with existing messages to prevent data loss
     try {
       const existingChat = await getChatById({ id: chatId });
-      if (existingChat.data && existingChat.data.chat) {
+      if (existingChat.data?.chat) {
         const existingChatData = JSON.parse(existingChat.data.chat);
-        if (
-          existingChatData.messages &&
-          Array.isArray(existingChatData.messages)
-        ) {
-          const existingUserMessages = existingChatData.messages.filter(
-            (m: any) => m.role === "user"
+
+        if (existingChatData.messages?.length > 0) {
+          // Create sets of IDs for efficient lookup
+          const incomingIds = new Set(incomingMessages.map((m) => m.id));
+          const existingMessages = existingChatData.messages;
+
+          // Find messages in DB that aren't in the incoming data
+          const missingMessages = existingMessages.filter(
+            (m: any) => !incomingIds.has(m.id)
           );
 
-          // Compare with incoming messages to ensure we're not losing any user messages
-          const existingUserIds = new Set(
-            existingUserMessages.map((m: any) => m.id)
-          );
-          const incomingUserIds = new Set(userMessages.map((m) => m.id));
+          // Add missing messages if any found
+          if (missingMessages.length > 0) {
+            incomingMessages.push(...missingMessages);
 
-          // Find user messages in DB that aren't in the incoming set
-          const missingUserMessages = existingUserMessages.filter(
-            (m: any) => !incomingUserIds.has(m.id)
-          );
-
-          if (missingUserMessages.length > 0) {
-            console.warn(
-              `[API] Warning: Found ${missingUserMessages.length} user messages in DB that are missing from the incoming request`
-            );
-            console.warn(
-              `[API] Missing user message IDs: ${missingUserMessages
-                .map((m: any) => m.id)
-                .join(", ")}`
-            );
-
-            // Add the missing user messages to our incoming messages array
-            incomingMessages.push(...missingUserMessages);
-
-            // Re-sort messages by timestamp if available to maintain chronological order
+            // Sort by timestamp to maintain order
             incomingMessages.sort((a, b) => {
               const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
               const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
               return aTime - bTime;
             });
-
-            console.log(
-              `[API] After merging, we now have ${
-                incomingMessages.length
-              } messages (${
-                incomingMessages.filter((m) => m.role === "user").length
-              } user, ${
-                incomingMessages.filter((m) => m.role === "assistant").length
-              } assistant)`
-            );
           }
         }
       }
     } catch (error) {
-      console.error("[API] Error checking existing messages:", error);
-      // Continue with saving the messages we have
+      // Continue with the messages we have if there's an error
     }
 
     // Prepare messages with proper formatting
@@ -167,55 +108,13 @@ export async function POST(request: NextRequest) {
         } as Message)
     );
 
-    // Use the dedicated updateChatMessages function
+    // Save messages to database
     await updateChatMessages(chatId, messages);
-    console.log(
-      `[API] Successfully updated ${messages.length} messages for chat ${chatId}`
-    );
-
-    // Retrieve the updated chat to confirm what was saved
-    const chat = await getChatById({ id: chatId });
-
-    // Verify what was actually saved
-    if (chat.data && chat.data.chat) {
-      try {
-        const savedChat = JSON.parse(chat.data.chat);
-        const savedUserMessages = savedChat.messages.filter(
-          (m: any) => m.role === "user"
-        );
-        const savedAssistantMessages = savedChat.messages.filter(
-          (m: any) => m.role === "assistant"
-        );
-
-        console.log(
-          `[API] Verified ${savedChat.messages.length} messages saved (${savedUserMessages.length} user, ${savedAssistantMessages.length} assistant)`
-        );
-
-        // Check specifically for user message loss
-        if (savedUserMessages.length !== userMessages.length) {
-          console.warn(
-            `[API] User message count mismatch - Sent: ${userMessages.length}, Saved: ${savedUserMessages.length}`
-          );
-
-          // Log the specific IDs to help debug
-          console.warn(
-            `[API] Sent user IDs: ${userMessages.map((m) => m.id).join(", ")}`
-          );
-          console.warn(
-            `[API] Saved user IDs: ${savedUserMessages
-              .map((m: any) => m.id)
-              .join(", ")}`
-          );
-        }
-      } catch (e) {
-        console.error("[API] Error verifying saved messages:", e);
-      }
-    }
 
     // Return the updated chat data
-    return Response.json(chat);
+    const updatedChat = await getChatById({ id: chatId });
+    return Response.json(updatedChat);
   } catch (error) {
-    console.error("Error updating chat messages:", error);
     return Response.json({
       data: null,
       error: error instanceof Error ? error.message : "Unknown error",

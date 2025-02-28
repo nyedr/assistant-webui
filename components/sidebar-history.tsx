@@ -7,6 +7,7 @@ import { memo, useEffect, useState } from "react";
 import { toast } from "sonner";
 import useSWR from "swr";
 import { cn } from "@/lib/utils";
+import { useChatContext } from "@/lib/context/chat-context";
 
 import {
   FolderIcon,
@@ -398,6 +399,7 @@ export function SidebarHistory() {
   const { id } = useParams();
   const pathname = usePathname();
   const router = useRouter();
+  const { refreshHistory } = useChatContext();
 
   const {
     data: response,
@@ -409,8 +411,10 @@ export function SidebarHistory() {
     status: number;
   }>("/api/chat", fetcher, {
     fallbackData: { data: [], error: null, status: 200 },
-    revalidateOnFocus: false,
-    revalidateOnReconnect: false,
+    revalidateOnFocus: true,
+    revalidateOnReconnect: true,
+    refreshInterval: 0,
+    dedupingInterval: 2000,
   });
 
   const {
@@ -422,8 +426,9 @@ export function SidebarHistory() {
     status: number;
   }>("/api/folders", fetcher, {
     fallbackData: { data: [], error: null, status: 200 },
-    revalidateOnFocus: false,
-    revalidateOnReconnect: false,
+    revalidateOnFocus: true,
+    revalidateOnReconnect: true,
+    dedupingInterval: 2000,
   });
 
   const folders = foldersResponse.data;
@@ -445,6 +450,23 @@ export function SidebarHistory() {
       mutateFolders();
     }
   }, [pathname, mutate, mutateFolders]);
+
+  // Refresh data when navigating to any chat route
+  useEffect(() => {
+    // Check if we're on a chat route
+    if (pathname.startsWith("/chat/")) {
+      // If the ID in the URL doesn't match any in our current list, this might be a new chat
+      const chatIdFromUrl = pathname.split("/").pop();
+      const chatExists = response?.data?.some(
+        (chat) => chat.id === chatIdFromUrl
+      );
+
+      if (!chatExists) {
+        // This could be a new chat that's not in our list yet, so refresh
+        mutate();
+      }
+    }
+  }, [pathname, response?.data, mutate]);
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
@@ -485,6 +507,10 @@ export function SidebarHistory() {
             };
           });
         }
+
+        // Use our context to refresh all chat-related data
+        refreshHistory();
+
         return `${deleteTarget.type} deleted successfully`;
       },
       error: (err) => `Failed to delete ${deleteTarget.type}: ${err.message}`,
@@ -505,6 +531,7 @@ export function SidebarHistory() {
       loading: "Updating chat...",
       success: () => {
         mutate();
+        refreshHistory();
         return "Chat updated successfully";
       },
       error: "Failed to update chat",
@@ -522,6 +549,7 @@ export function SidebarHistory() {
       loading: "Updating folder...",
       success: () => {
         mutateFolders();
+        refreshHistory();
         return "Folder updated successfully";
       },
       error: "Failed to update folder",
@@ -541,6 +569,7 @@ export function SidebarHistory() {
       loading: "Creating folder...",
       success: () => {
         mutateFolders();
+        refreshHistory();
         setShowFolderModal(false);
         setNewFolderName("");
         return "Folder created successfully";

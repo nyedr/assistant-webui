@@ -12,6 +12,7 @@ import { Messages } from "./messages";
 import { useBlockSelector } from "@/hooks/use-block";
 import { generateUUID } from "@/lib/utils";
 import { toast } from "sonner";
+import { useChatContext } from "@/lib/context/chat-context";
 
 interface ChatProps {
   id: string;
@@ -21,6 +22,7 @@ interface ChatProps {
 
 export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
   const { mutate } = useSWRConfig();
+  const { notifyChatUpdated } = useChatContext();
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const isBlockVisible = useBlockSelector((state) => state.isVisible);
   const [errorState, setErrorState] = useState<string | null>(null);
@@ -67,186 +69,44 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
       },
     },
     sendExtraMessageFields: true,
-    experimental_throttle: 50, // Reduced throttle for more responsive updates
-    streamProtocol: "data", // Client protocol setting - changed from "text" to "data"
+    experimental_throttle: 50,
+    streamProtocol: "data",
     generateId: generateUUID,
     onResponse: async (response) => {
-      // Handle API response
       if (!response.ok) {
         toast.error(`API Error: ${response.statusText}`);
         return;
       }
-
-      // Log response status if not 200
-      if (response.status !== 200) {
-        console.log(
-          "Non-200 response from proxy:",
-          response.status,
-          response.statusText
-        );
-      }
-
-      // Log warning if content type is not as expected
-      if (response.headers.get("content-type") !== "text/event-stream") {
-        console.warn(
-          "Warning: Expected 'text/event-stream' content type but received:",
-          response.headers.get("content-type")
-        );
-      }
     },
     onFinish: (message) => {
-      // Update chat history in the database
-      // Get the most up-to-date messages from the vercel/ai useChat hook
-      const currentMessages = messages;
+      // Get all current messages including the final response
+      const currentMessages = [...messages];
 
-      // IMPORTANT: Extract message IDs from the DOM to ensure we catch all visible messages
-      // This handles the edge case where a message is rendered but not in the React state yet
-      let visibleMessageIds: string[] = [];
-      try {
-        const messageElements = document.querySelectorAll("[data-message-id]");
-        visibleMessageIds = Array.from(messageElements)
-          .map((el) => el.getAttribute("data-message-id"))
-          .filter(Boolean) as string[];
-      } catch (e) {
-        console.error("Error checking DOM for messages:", e);
-      }
-
-      // Check for any potential gaps in the conversation flow
-      const assistantMessages = currentMessages.filter(
-        (m) => m.role === "assistant"
-      );
-      const userMessages = currentMessages.filter((m) => m.role === "user");
-
-      // Make sure to include the final message in what we save
-      const allMessages = [...currentMessages];
-
-      // Check if the final message is already in the array
-      const messageExists = allMessages.some((m) => m.id === message.id);
-      if (!messageExists) {
-        allMessages.push({
+      // Add the final message if it's not already in the messages array
+      if (!currentMessages.some((m) => m.id === message.id)) {
+        currentMessages.push({
           ...message,
           parts: message.parts || [],
         });
       }
 
-      // IMPORTANT: Check sessionStorage for any cached messages we might need to include
-      try {
-        const cachedMsgKey = `temp_messages_${chatId}`;
-        const cachedMsgsJson = sessionStorage.getItem(cachedMsgKey);
-        if (cachedMsgsJson) {
-          const cachedMsgs = JSON.parse(cachedMsgsJson);
-          if (Array.isArray(cachedMsgs) && cachedMsgs.length > 0) {
-            // Add any cached messages that aren't already in our allMessages array
-            const existingIds = new Set(allMessages.map((m) => m.id));
-            const missingMessages = cachedMsgs.filter(
-              (m) => !existingIds.has(m.id)
-            );
-
-            if (missingMessages.length > 0) {
-              allMessages.push(...missingMessages);
-
-              // Sort messages by timestamp to maintain proper order
-              allMessages.sort((a, b) => {
-                const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-                const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-                return aTime - bTime;
-              });
-            }
-
-            // Clear the cache after using it
-            sessionStorage.removeItem(cachedMsgKey);
-          }
-        }
-      } catch (e) {
-        console.error("Error processing cached messages:", e);
-      }
-
-      // Sanitize message content to remove any SSE formatting and ensure proper spacing
-      const sanitizedMessages = allMessages.map((msg) => {
-        // Process assistant messages with minimal cleanup
-        if (msg.role === "assistant") {
-          // Only remove SSE formatting and fix any broken markdown - preserve original structure
-          const content = msg.content;
-
-          return {
-            ...msg,
-            content,
-          };
-        }
-
-        return {
-          ...msg,
-          content: msg.content,
-        };
-      });
-
-      // Store debug info in sessionStorage
-      try {
-        const debugInfo = {
-          savedAt: new Date().toISOString(),
-          messageCount: sanitizedMessages.length,
-          messageIds: sanitizedMessages.map((m) => m.id),
-          messageRoles: sanitizedMessages.map((m) => m.role),
-          chatId: chatId,
-          userMessages: sanitizedMessages.filter((m) => m.role === "user")
-            .length,
-          assistantMessages: sanitizedMessages.filter(
-            (m) => m.role === "assistant"
-          ).length,
-        };
-        sessionStorage.setItem(
-          `chatDebug_${chatId}`,
-          JSON.stringify(debugInfo)
-        );
-      } catch (e) {
-        // Silent error - just debug info
-      }
-
-      // Save all messages using the dedicated messages endpoint
-      const updatePromise = fetch(`/api/chat/messages?id=${chatId}`, {
+      // Save all messages to the database
+      fetch(`/api/chat/messages?id=${chatId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(sanitizedMessages),
+        body: JSON.stringify(currentMessages),
       })
         .then((res) => {
           if (!res.ok) {
-            console.error(
+            throw new Error(
               `Failed to save chat messages: ${res.status} ${res.statusText}`
             );
-            return res.json().then((data) => {
-              const errorMessage = data.error || "Failed to save chat messages";
-              console.error(`Error details:`, data);
-              throw new Error(errorMessage);
-            });
           }
           return res.json();
         })
-        .then((data) => {
-          // Verify the saved messages to ensure all messages were captured
-          if (data.data && data.data.chat) {
-            try {
-              const savedChat = JSON.parse(data.data.chat);
-              const savedUserMsgCount = savedChat.messages.filter(
-                (m: any) => m.role === "user"
-              ).length;
-              const savedAssistantMsgCount = savedChat.messages.filter(
-                (m: any) => m.role === "assistant"
-              ).length;
-
-              // Check if we've lost any user messages
-              const uiUserMsgCount = sanitizedMessages.filter(
-                (m) => m.role === "user"
-              ).length;
-              if (savedUserMsgCount < uiUserMsgCount) {
-                console.warn(
-                  `Warning: Some user messages may not have been saved. UI: ${uiUserMsgCount}, Saved: ${savedUserMsgCount}`
-                );
-              }
-            } catch (e) {
-              console.error("Error parsing saved chat JSON:", e);
-            }
-          }
-          return data;
+        .then(() => {
+          // Notify about the chat update using our context
+          notifyChatUpdated(chatId);
         })
         .catch((error) => {
           console.error("Error saving chat history:", error);
@@ -255,23 +115,17 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
           );
         });
 
-      // Notify UI components about the update
+      // Update the UI - make sure to update both endpoints used in the app
       mutate("/api/history");
+      mutate("/api/chat"); // Add this to update sidebar
     },
     onError: (error) => {
       console.error("Chat error:", error);
 
-      // More detailed error handling based on error type
       if (error.message?.includes("Failed to parse stream")) {
-        console.error(
-          "Stream parsing error. This is likely an issue with the SSE format from the API."
-        );
-
         toast.error(
           "Error processing the response stream. Trying to recover..."
         );
-
-        // Attempt to recover by stopping the current stream
         stop();
       } else if (error.message?.includes("fetch failed")) {
         toast.error("Connection error. Please check your internet connection.");
@@ -305,32 +159,22 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
         throw new Error("Missing chat ID");
       }
 
-      // Clear any previous errors
       setErrorState(null);
 
-      // Use the standard handleSubmit which will ensure all system hooks fire correctly
+      // Submit the message with any attachments
       handleSubmit(e, {
         ...(options || {}),
         experimental_attachments: attachments,
       });
 
-      // After the handleSubmit completes, find the most recent user message
-      const recentUserMessageIndex = [...messages]
-        .reverse()
-        .findIndex((msg) => msg.role === "user");
-
-      if (recentUserMessageIndex !== -1 && scrollToMessageRef.current) {
-        const recentUserMessage = [...messages].reverse()[
-          recentUserMessageIndex
-        ];
-
-        // Small delay to ensure DOM is updated
-        setTimeout(() => {
-          if (scrollToMessageRef.current && recentUserMessage.id) {
-            scrollToMessageRef.current(recentUserMessage.id);
-          }
-        }, 300); // Increased timeout to ensure message is rendered
-      }
+      // Scroll to the message after sending
+      setTimeout(() => {
+        if (scrollToMessageRef.current && messages.length > 0) {
+          // Find the latest message ID to scroll to
+          const latestMessage = messages[messages.length - 1];
+          scrollToMessageRef.current(latestMessage.id);
+        }
+      }, 300);
     } catch (err) {
       const error = err as Error;
       setErrorState(error.message);

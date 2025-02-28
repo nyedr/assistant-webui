@@ -3,6 +3,7 @@ import { Toaster } from "sonner";
 import { CookiesProvider } from "next-client-cookies/server";
 
 import { ThemeProvider } from "@/components/theme-provider";
+import { ChatProvider } from "@/lib/context/chat-context";
 
 import "./globals.css";
 
@@ -64,8 +65,10 @@ export default async function RootLayout({
             enableSystem
             disableTransitionOnChange
           >
-            <Toaster position="top-center" />
-            {children}
+            <ChatProvider>
+              <Toaster position="top-center" />
+              {children}
+            </ChatProvider>
           </ThemeProvider>
         </CookiesProvider>
       </body>
