@@ -59,7 +59,6 @@ export default function ChatMarkdown({
       },
       highlight: {
         className: "text-base leading-7 text-foreground",
-        spotlight: true,
         copyButtonSize: "large",
       },
       img: {

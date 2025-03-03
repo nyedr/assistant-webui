@@ -1,4 +1,3 @@
-import { z } from "zod";
 import { createDocumentHandler, type DataStream } from "@/lib/artifacts/server";
 import { codePrompt, updateDocumentPrompt } from "@/lib/ai/prompts";
 

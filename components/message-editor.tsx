@@ -4,7 +4,8 @@ import { Button } from "./ui/button";
 import { useEffect, useRef, useState } from "react";
 import { Textarea } from "./ui/textarea";
 import { deleteTrailingMessages } from "@/app/(chat)/actions";
-import type { ChatRequestOptions, Message } from "ai";
+import type { Message } from "ai";
+import { ExtendedRequestOptions } from "@/hooks/use-ai-chat";
 
 interface MessageEditorProps {
   message: Message;
@@ -13,7 +14,7 @@ interface MessageEditorProps {
     messages: Message[] | ((messages: Message[]) => Message[])
   ) => void;
   reload: (
-    chatRequestOptions?: ChatRequestOptions
+    chatRequestOptions?: ExtendedRequestOptions
   ) => Promise<string | null | undefined>;
 }
 

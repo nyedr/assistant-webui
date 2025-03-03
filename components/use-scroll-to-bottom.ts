@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useRef,
-  type RefObject,
-  useCallback,
-  useState,
-} from "react";
+import { useEffect, useRef, type RefObject, useCallback } from "react";
 
 // Helper function to throttle function calls
 function throttle<T extends (...args: any[]) => any>(

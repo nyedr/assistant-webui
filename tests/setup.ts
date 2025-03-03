@@ -31,25 +31,31 @@ async function cleanupDatabase() {
       ]);
       db.delete(chat).run();
 
-      // Close database connection
+      // Close database connection more robustly
       const sqlite = (db as any)._instance;
       if (sqlite) {
-        sqlite.close();
+        try {
+          sqlite.close();
+          console.log("Database connection closed successfully");
+        } catch (err) {
+          console.error("Error closing database connection:", err);
+        }
       }
 
       // Clear the db reference
       db = undefined as any;
 
-      // Wait a bit for file handles to be released
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // Wait longer for file handles to be released (1 second instead of 500ms)
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
 
     // Delete database file with retries
     if (fs.existsSync(TEST_DB_PATH)) {
-      let retries = 5;
+      let retries = 10; // Increase from 5 to 10
       while (retries > 0) {
         try {
           fs.unlinkSync(TEST_DB_PATH);
+          console.log("Test database deleted successfully");
           break;
         } catch (err: any) {
           if (err.code === "EBUSY" || err.code === "EACCES") {
@@ -59,9 +65,11 @@ async function cleanupDatabase() {
                 "Failed to delete test database after retries:",
                 err
               );
+              // Don't throw an error, just log it and continue
               break;
             }
-            await new Promise((resolve) => setTimeout(resolve, 100));
+            // Increase wait time between retries (200ms instead of 100ms)
+            await new Promise((resolve) => setTimeout(resolve, 200));
           } else if (err.code !== "ENOENT") {
             console.error("Failed to delete test database:", err);
             break;
@@ -71,6 +79,7 @@ async function cleanupDatabase() {
     }
   } catch (error) {
     console.error("Failed to clean up test database:", error);
+    // Don't throw an error, just log it and continue
   }
 }
 

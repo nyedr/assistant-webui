@@ -7,8 +7,9 @@ import { toast } from "sonner";
 
 import { createNewChat, updateChatMessages } from "@/app/(chat)/actions";
 import { generateUUID } from "@/lib/utils";
-import { ChatRequestOptions } from "ai";
+import { ChatRequestOptions } from "@/hooks/use-ai-chat";
 import { CreateMessage, Message } from "ai";
+
 interface SuggestedActionsProps {
   chatId: string;
   append: (

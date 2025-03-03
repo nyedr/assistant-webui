@@ -45,4 +45,13 @@ yarn-error.log*
 .npmrc
 
 /data
+
 data/chat.db
+
+.cursormemory.md
+
+/test-results
+
+/playwright-report
+
+.cursor

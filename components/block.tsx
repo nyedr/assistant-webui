@@ -29,9 +29,12 @@ import { useSidebar } from "./ui/sidebar";
 import { useBlock } from "@/hooks/use-block";
 import equal from "fast-deep-equal";
 import { ImageEditor } from "./image-editor";
-import { ChatRequestOptions, Message } from "ai";
-import { CreateMessage } from "ai";
+import { Message, CreateMessage } from "ai";
 import { Attachment } from "ai";
+import {
+  ChatRequestOptions,
+  ExtendedRequestOptions,
+} from "@/hooks/use-ai-chat";
 
 export type BlockKind = "text" | "code" | "image";
 
@@ -71,7 +74,7 @@ interface BlockProps {
   setAttachments: Dispatch<SetStateAction<Attachment[]>>;
   handleSubmit: (
     event?: React.FormEvent,
-    options?: Record<string, unknown>
+    options?: ExtendedRequestOptions
   ) => Promise<void>;
   append: (
     message: Message | CreateMessage,
@@ -82,7 +85,7 @@ interface BlockProps {
     messages: Message[] | ((messages: Message[]) => Message[])
   ) => void;
   reload: (
-    chatRequestOptions?: ChatRequestOptions
+    chatRequestOptions?: ExtendedRequestOptions
   ) => Promise<string | null | undefined>;
   className?: string;
 }
@@ -336,7 +339,16 @@ function PureBlock({
                     chatId={chatId}
                     input={input}
                     setInput={setInput}
-                    handleSubmit={handleSubmit}
+                    handleSubmit={(event?, options?) => {
+                      if (options) {
+                        return handleSubmit(
+                          event,
+                          options as ExtendedRequestOptions
+                        );
+                      } else {
+                        return handleSubmit(event);
+                      }
+                    }}
                     isLoading={isLoading}
                     stop={stop}
                     attachments={attachments}
@@ -530,7 +542,7 @@ function PureBlock({
                     <Toolbar
                       isToolbarVisible={isToolbarVisible}
                       setIsToolbarVisible={setIsToolbarVisible}
-                      append={append}
+                      append={append as any}
                       isLoading={isLoading}
                       stop={stop}
                       setMessages={setMessages}

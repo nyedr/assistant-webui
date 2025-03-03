@@ -1,16 +1,20 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useSWRConfig } from "swr";
-import { Message, Attachment } from "ai";
-import { useChat } from "ai/react";
+import type { Message, Attachment } from "ai";
+import {
+  useAIChat,
+  type ChatRequestOptions,
+  type ExtendedRequestOptions,
+} from "@/hooks/use-ai-chat";
 
 import { ChatHeader } from "@/components/chat-header";
 import { Block } from "./block";
 import { MultimodalInput } from "./multimodal-input";
 import { Messages } from "./messages";
 import { useBlockSelector } from "@/hooks/use-block";
-import { generateUUID } from "@/lib/utils";
+import { generateUUID, saveChatMessages, ExtendedMessage } from "@/lib/utils";
 import { toast } from "sonner";
 import { useChatContext } from "@/lib/context/chat-context";
 
@@ -28,16 +32,13 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
   const [errorState, setErrorState] = useState<string | null>(null);
   const scrollToMessageRef = useRef<((messageId: string) => void) | null>(null);
 
-  // Store consistent chat ID in state to avoid issues with prop changes
-  const [chatId] = useState(id);
+  const chatId = useMemo(() => id, [id]);
 
-  // Log when the component mounts with a chat ID
+  // Store original chat ID in sessionStorage for test compatibility (is this needed?)
   useEffect(() => {
-    // Store the original chat ID in sessionStorage for debugging
-    sessionStorage.setItem("originalChatId", chatId);
-    return () => {
-      // Clean up
-    };
+    if (typeof window !== "undefined" && chatId) {
+      sessionStorage.setItem("originalChatId", chatId);
+    }
   }, [chatId]);
 
   const {
@@ -51,10 +52,13 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
     stop,
     reload,
     error,
-  } = useChat({
+    switchBranch,
+    getBranchInfo,
+    retryMessage,
+  } = useAIChat({
     id: chatId,
     initialMessages,
-    api: `/api/chat/proxy`,
+    api: "/api/chat/proxy",
     headers: {
       "Content-Type": "application/json",
     },
@@ -71,7 +75,6 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
     sendExtraMessageFields: true,
     experimental_throttle: 50,
     streamProtocol: "data",
-    generateId: generateUUID,
     onResponse: async (response) => {
       if (!response.ok) {
         toast.error(`API Error: ${response.statusText}`);
@@ -79,23 +82,27 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
       }
     },
     onFinish: (message) => {
-      // Get all current messages including the final response
-      const currentMessages = [...messages];
+      // Save the complete chat to the database
 
-      // Add the final message if it's not already in the messages array
-      if (!currentMessages.some((m) => m.id === message.id)) {
-        currentMessages.push({
-          ...message,
-          parts: message.parts || [],
-        });
-      }
+      // Prepare all messages for storage
+      const messagesForStorage = [
+        ...messages,
+        message as unknown as ExtendedMessage,
+      ].map((msg) => {
+        const extMsg = msg as ExtendedMessage;
+        return {
+          ...extMsg,
+          model:
+            extMsg.role === "assistant"
+              ? extMsg.model || selectedModelId || "unknown"
+              : extMsg.model,
+        } as Message;
+      });
 
-      // Save all messages to the database
-      fetch(`/api/chat/messages?id=${chatId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(currentMessages),
-      })
+      console.log("messagesForStorage", messagesForStorage);
+
+      // Save to DB
+      saveChatMessages(chatId, messagesForStorage as Message[])
         .then((res) => {
           if (!res.ok) {
             throw new Error(
@@ -105,7 +112,6 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
           return res.json();
         })
         .then(() => {
-          // Notify about the chat update using our context
           notifyChatUpdated(chatId);
         })
         .catch((error) => {
@@ -115,13 +121,10 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
           );
         });
 
-      // Update the UI - make sure to update both endpoints used in the app
       mutate("/api/history");
-      mutate("/api/chat"); // Add this to update sidebar
+      mutate("/api/chat");
     },
     onError: (error) => {
-      console.error("Chat error:", error);
-
       if (error.message?.includes("Failed to parse stream")) {
         toast.error(
           "Error processing the response stream. Trying to recover..."
@@ -137,22 +140,10 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
     },
   });
 
-  // Monitor messages state for critical issues only
-  useEffect(() => {
-    // Only check for duplicate message IDs which could cause issues
-    if (messages.length > 0) {
-      const messageIds = messages.map((m) => m.id);
-      const uniqueIds = new Set(messageIds);
-      if (messageIds.length !== uniqueIds.size) {
-        console.warn(`Warning: Duplicate message IDs detected in state`);
-      }
-    }
-  }, [messages]);
-
   // Type-safe submit handler
   const handleChatSubmit = async (
     e?: React.FormEvent,
-    options?: Record<string, unknown>
+    options?: Record<string, any>
   ) => {
     try {
       if (!chatId) {
@@ -161,16 +152,50 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
 
       setErrorState(null);
 
-      // Submit the message with any attachments
+      // When a new user message is about to be sent
+      if (input.trim() && !options?.preserveMessageId) {
+        // Generate a consistent ID for the user message
+        const messageId = generateUUID();
+
+        // Store a copy of the input
+        const userContent = input;
+
+        // Clear input immediately for better UX
+        setInput("");
+
+        // Note: We don't need to find the parent ID manually anymore
+        // as useAIChat will handle this automatically
+        await append(
+          {
+            id: messageId,
+            role: "user",
+            content: userContent,
+          } as Message,
+          {
+            ...(options || {}),
+            experimental_attachments: attachments,
+          } as ChatRequestOptions
+        );
+
+        // Scroll to the message after sending
+        setTimeout(() => {
+          if (scrollToMessageRef.current && messages.length > 0) {
+            const latestMessage = messages[messages.length - 1];
+            scrollToMessageRef.current(latestMessage.id);
+          }
+        }, 300);
+        return;
+      }
+
+      // For other cases like regeneration, use normal handleSubmit
       handleSubmit(e, {
         ...(options || {}),
         experimental_attachments: attachments,
-      });
+      } as ExtendedRequestOptions);
 
       // Scroll to the message after sending
       setTimeout(() => {
         if (scrollToMessageRef.current && messages.length > 0) {
-          // Find the latest message ID to scroll to
           const latestMessage = messages[messages.length - 1];
           scrollToMessageRef.current(latestMessage.id);
         }
@@ -179,13 +204,6 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
       const error = err as Error;
       setErrorState(error.message);
       toast.error(error.message);
-    }
-  };
-
-  // Function to handle scrolling to a specific message
-  const handleScrollToMessage = (messageId: string) => {
-    if (scrollToMessageRef.current) {
-      scrollToMessageRef.current(messageId);
     }
   };
 
@@ -212,6 +230,7 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
               messages={messages}
               setMessages={setMessages}
               reload={reload}
+              retryMessage={retryMessage}
               isBlockVisible={isBlockVisible}
               scrollToMessage={(fn) => {
                 if (typeof fn === "function") {

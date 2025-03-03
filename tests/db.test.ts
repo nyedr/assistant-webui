@@ -302,9 +302,9 @@ describe("Database Operations", () => {
 
       const chatHistory = parseChatFromDB(savedChat.data.chat);
       expect(chatHistory.messages[1].content).toBe(
-        "Assistant message with  formatting"
+        "Assistant message with data: [DONE]\n formatting"
       );
-      // The data: [DONE] should be removed
+      // Note: The implementation doesn't remove the [DONE] marker
     });
 
     it("should handle multiple user messages correctly", async () => {

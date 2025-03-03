@@ -1,6 +1,5 @@
 "use client";
 
-import cx from "classnames";
 import type React from "react";
 import {
   useRef,
@@ -15,7 +14,7 @@ import {
 import { toast } from "sonner";
 import { useLocalStorage, useWindowSize } from "usehooks-ts";
 
-import { generateUUID, sanitizeUIMessages } from "@/lib/utils";
+import { cn, generateUUID, sanitizeUIMessages } from "@/lib/utils";
 
 import {
   createNewChat,
@@ -28,7 +27,8 @@ import { PreviewAttachment } from "./preview-attachment";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import equal from "fast-deep-equal";
-import { ChatRequestOptions, Message, CreateMessage, Attachment } from "ai";
+import { Message, CreateMessage, Attachment } from "ai";
+import { ChatRequestOptions } from "@/hooks/use-ai-chat";
 
 function PureMultimodalInput({
   chatId,
@@ -140,7 +140,10 @@ function PureMultimodalInput({
     const selectionStart = event.target.selectionStart;
     const selectionEnd = event.target.selectionEnd;
 
-    setInput(event.target.value);
+    const newValue = event.target.value;
+    setInput(newValue);
+    // Ensure local storage is updated in sync with input state
+    setLocalStorageInput(newValue);
     adjustHeight();
 
     // After React updates the component and adjusts height,
@@ -174,6 +177,15 @@ function PureMultimodalInput({
         annotations: [],
         toolInvocations: [],
       };
+
+      // Store the current input and attachments
+      const currentAttachments = [...attachments];
+
+      // Clear input and reset UI immediately for better user experience
+      setInput("");
+      setLocalStorageInput("");
+      setAttachments([]);
+      resetHeight();
 
       console.log(`Created new user message with ID: ${newUserMessage.id}`);
 
@@ -277,14 +289,10 @@ function PureMultimodalInput({
       window.history.replaceState({}, "", `/chat/${currentChatId}`);
 
       // Finally, submit the message to get the AI response
-      console.log(`Invoking AI with ${attachments.length} attachments`);
+      console.log(`Invoking AI with ${currentAttachments.length} attachments`);
       await handleSubmit(undefined, {
-        experimental_attachments: attachments,
+        experimental_attachments: currentAttachments,
       });
-
-      setAttachments([]);
-      setLocalStorageInput("");
-      resetHeight();
 
       if (width && width > 768) {
         textareaRef.current?.focus();
@@ -448,7 +456,7 @@ function PureMultimodalInput({
                           placeholder="Ask anything..."
                           value={input}
                           onChange={handleInput}
-                          className={cx(
+                          className={cn(
                             "min-h-[24px] max-h-[calc(75dvh)] overflow-y-auto resize-none !border-0 !shadow-none !bg-transparent !p-0 !py-2 !rounded-none !text-base",
                             className
                           )}
@@ -498,7 +506,7 @@ function PureMultimodalInput({
                     <div className="flex gap-x-1.5">
                       {isLoading ? (
                         <Button
-                          className="flex h-9 min-w-9 items-center justify-center rounded-full border border-zinc-200 dark:border-zinc-700 text-token-text-secondary hover:bg-muted dark:hover:bg-zinc-700"
+                          className="flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 dark:border-zinc-700 text-token-text-secondary hover:bg-muted dark:hover:bg-zinc-700"
                           onClick={(event) => {
                             event.preventDefault();
                             stop();

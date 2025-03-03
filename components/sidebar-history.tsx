@@ -495,7 +495,10 @@ export function SidebarHistory() {
               : prev
           );
           if (deleteTarget.id === id) {
-            router.push("/");
+            router.push("/", { scroll: false });
+            setTimeout(() => {
+              router.refresh();
+            }, 100);
           }
         } else {
           mutateFolders((prev) => {
@@ -513,7 +516,8 @@ export function SidebarHistory() {
 
         return `${deleteTarget.type} deleted successfully`;
       },
-      error: (err) => `Failed to delete ${deleteTarget.type}: ${err.message}`,
+      error: (error) =>
+        `Failed to delete ${deleteTarget.type}: ${error.message}`,
     });
 
     setShowDeleteDialog(false);

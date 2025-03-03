@@ -1,6 +1,6 @@
 "use client";
 
-import type { ChatRequestOptions, Message } from "ai";
+import type { Message } from "ai";
 import { AnimatePresence, motion } from "framer-motion";
 import { memo, useState, useEffect, useRef } from "react";
 
@@ -8,11 +8,12 @@ import { PencilEditIcon } from "./icons";
 import ChatMarkdown from "./markdown";
 import { MessageActions } from "./message-actions";
 import { PreviewAttachment } from "./preview-attachment";
-import { cn } from "@/lib/utils";
+import { cn, ensureExtendedMessage } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { MessageEditor } from "./message-editor";
 import AnimatedGradientText from "./ui/gradient-text";
+import { ExtendedRequestOptions } from "@/hooks/use-ai-chat";
 
 interface PreviewMessageProps {
   chatId: string;
@@ -22,8 +23,9 @@ interface PreviewMessageProps {
     messages: Message[] | ((messages: Message[]) => Message[])
   ) => void;
   reload: (
-    chatRequestOptions?: ChatRequestOptions
+    chatRequestOptions?: ExtendedRequestOptions
   ) => Promise<string | null | undefined>;
+  retryMessage?: (messageId: string) => Promise<string | null | undefined>;
   scrollToMessage?: (messageId: string) => void;
 }
 
@@ -33,6 +35,7 @@ const PurePreviewMessage = ({
   isLoading,
   setMessages,
   reload,
+  retryMessage,
   scrollToMessage,
 }: PreviewMessageProps) => {
   const [isEditing, setIsEditing] = useState(false);
@@ -67,10 +70,6 @@ const PurePreviewMessage = ({
             }
           )}
         >
-          {/* {isAssistantMessage && (
-            <div className="size-8 flex items-center rounded-full justify-center ring-1 shrink-0 ring-border bg-background"></div>
-          )} */}
-
           <div className="flex flex-col gap-3 w-full">
             {message.experimental_attachments && (
               <div className="flex flex-row justify-end gap-2">
@@ -103,14 +102,17 @@ const PurePreviewMessage = ({
                 )}
 
                 {isUserMessage ? (
-                  <div className="user-message">
+                  <div className="user-message" data-message-role="user">
                     <ChatMarkdown
                       content={message.content}
                       isUserMessage={isUserMessage}
                     />
                   </div>
                 ) : (
-                  <div className="assistant-message prose prose-sm dark:prose-invert max-w-none markdown-message-container">
+                  <div
+                    className="assistant-message prose prose-sm dark:prose-invert max-w-none markdown-message-container"
+                    data-message-role="assistant"
+                  >
                     <ChatMarkdown content={message.content} />
                   </div>
                 )}
@@ -134,10 +136,17 @@ const PurePreviewMessage = ({
             <MessageActions
               key={`action-${message.id}`}
               chatId={chatId}
-              message={message}
+              message={ensureExtendedMessage(message)}
               isLoading={isLoading}
               setMessages={setMessages}
-              reload={reload}
+              reload={(options?: ExtendedRequestOptions) => {
+                if (options) {
+                  const { options: _, ...standardOptions } = options;
+                  return reload(standardOptions);
+                }
+                return reload();
+              }}
+              retryMessage={retryMessage}
               scrollToMessage={scrollToMessage}
             />
           </div>

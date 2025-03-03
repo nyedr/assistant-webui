@@ -1,305 +1,283 @@
-import { NextResponse } from "next/server";
-import { LanguageModel, streamText } from "ai";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { z } from "zod";
-import { messageSchema } from "../messages/route";
-import { ChatCompletionMessageParam } from "openai/resources/chat/completions.mjs";
+import type { Message } from "ai";
+import type { Document } from "@/lib/db/schema";
+import { ValidatedMessage } from "@/app/(chat)/api/chat/messages/route";
 
-// Define the request schema for validation
-const RequestSchema = z.object({
-  messages: z.array(messageSchema),
-  model: z.string(),
-  id: z.string().optional(),
-  stream: z.boolean().optional().default(true),
-  streamProtocol: z.enum(["text", "data"]).optional().default("text"),
-  temperature: z.number().optional(),
-  max_tokens: z.number().optional(),
-  top_p: z.number().optional(),
-  frequency_penalty: z.number().optional(),
-  presence_penalty: z.number().optional(),
-  reasoning: z
-    .object({
-      effort: z.enum(["low", "medium", "high"]).optional(),
-      exclude: z.boolean().optional(),
-    })
-    .optional(),
-  options: z
-    .object({
-      parentMessageId: z.string().optional(),
-      skipUserMessage: z.boolean().optional(),
-      isBranch: z.boolean().optional(),
-    })
-    .optional(),
-  seed: z.union([z.string(), z.number()]).optional(),
-});
-
-// Error response type
-interface ErrorResponse {
-  error: string;
-  details?: unknown;
+// Extended Message type with additional properties
+export interface ExtendedMessage extends Message {
+  parent_id?: string | null;
+  children_ids?: string[];
+  model?: string;
+  parts?: any[];
 }
 
-// Type for our validated message from the schema
-type ValidatedMessage = z.infer<typeof messageSchema>;
+// Extended ChatRequestOptions type
+export interface ExtendedChatRequestOptions {
+  options?: {
+    parentMessageId?: string;
+    preserveMessageId?: string;
+  };
+}
 
-// OpenRouter proxy using Vercel AI SDK streamText
-export async function POST(req: Request): Promise<Response> {
-  try {
-    // Get API key and base URL from environment variables
-    const provider = process.env.NEXT_PUBLIC_CHAT_PROVIDER;
-    const apiKey = process.env.NEXT_PUBLIC_CHAT_API_KEY;
-    const baseUrl = process.env.NEXT_PUBLIC_CHAT_BASE_URL;
-
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: "API key not found" } as ErrorResponse,
-        { status: 500 }
-      );
+/**
+ * Removes empty or invalid messages from the response
+ */
+export function sanitizeResponseMessages(
+  messages: Array<Message>
+): Array<Message> {
+  return messages.filter((message) => {
+    if (message.role !== "assistant") {
+      return true;
     }
 
-    if (!baseUrl) {
-      return NextResponse.json(
-        { error: "Base URL not found" } as ErrorResponse,
-        { status: 500 }
-      );
-    }
-
-    // Parse and validate the request body
-    let body;
-    try {
-      const rawBody = await req.json();
-
-      // Validate the request body against the schema
-      const validationResult = RequestSchema.safeParse(rawBody);
-
-      if (!validationResult.success) {
-        console.error("Validation error:", validationResult.error);
-        return NextResponse.json(
-          {
-            error: "Invalid request body",
-            details: validationResult.error.format(),
-          } as ErrorResponse,
-          { status: 400 }
-        );
-      }
-
-      body = validationResult.data;
-    } catch (error) {
-      return NextResponse.json(
-        {
-          error: "Failed to parse request body",
-          details: error instanceof Error ? error.message : String(error),
-        } as ErrorResponse,
-        { status: 400 }
-      );
-    }
-
-    // Extract required parameters
-    const {
-      messages,
-      model,
-      id,
-      stream = true,
-      streamProtocol = "text",
-    } = body;
-
-    console.log(`Processing request for model: ${model}, chat: ${id}`);
-    console.log(`Using protocol: ${streamProtocol}`);
-
-    // Create an OpenAI-compatible provider pointed to OpenRouter
-    const openRouterProvider = createOpenAICompatible({
-      name: provider ?? "openai compatible",
-      apiKey,
-      baseURL: baseUrl,
-    });
-
-    // Handle streaming response with streamText
-    if (stream) {
-      console.log(`Stream protocol: ${streamProtocol}`);
-
-      // Convert messages to CoreMessage format for the AI SDK
-      const processedMessages = processMessages(messages, body.options);
-
-      // Add detailed logging of processed messages
-      console.log(`Processed messages (${processedMessages.length}):`);
-      processedMessages.forEach((msg: ValidatedMessage, idx: number) => {
-        console.log(
-          `[${idx}] ${msg.role}: ${msg.content.substring(0, 50)}${
-            msg.content.length > 50 ? "..." : ""
-          }`
-        );
-      });
-
-      const coreMessages = processedMessages.map((msg: ValidatedMessage) => {
-        // Create a properly typed message based on the role
-        if (msg.role === "user") {
-          return {
-            role: "user",
-            content: msg.content,
-            ...(msg.name && { name: msg.name }),
-          } as const;
-        } else if (msg.role === "assistant") {
-          return {
-            role: "assistant",
-            content: msg.content,
-          } as const;
-        } else if (msg.role === "system") {
-          return {
-            role: "system",
-            content: msg.content,
-          } as const;
-        } else {
-          // For "data" role, convert to assistant as it's closest match
-          return {
-            role: "assistant",
-            content: msg.content,
-          } as const;
-        }
-      });
-
-      // Log final messages being sent to LLM
-      console.log(`Sending ${coreMessages.length} messages to ${model}:`);
-      coreMessages.forEach((msg: any, idx: number) => {
-        console.log(
-          `[${idx}] ${msg.role}: ${msg.content.substring(0, 50)}${
-            msg.content.length > 50 ? "..." : ""
-          }`
-        );
-      });
-
-      // Safety check - ensure we're not sending empty messages
-      const validMessages = coreMessages.filter(
-        (msg: { content: string }) => msg.content && msg.content.trim() !== ""
-      );
-      if (validMessages.length !== coreMessages.length) {
-        console.log(
-          `WARNING: Filtered out ${
-            coreMessages.length - validMessages.length
-          } empty messages`
-        );
-      }
-
-      if (validMessages.length === 0) {
-        // If we have no valid messages, add a default system prompt
-        validMessages.push({
-          role: "system",
-          content:
-            "You are a helpful AI assistant. Please provide a thoughtful response.",
-        } as const);
-        console.log(
-          "Added default system message because all messages were empty"
-        );
-      }
-
-      // Create a streamText result using the OpenAI-compatible provider
-      const result = streamText({
-        model: openRouterProvider(model) as LanguageModel,
-        messages: coreMessages,
-        // Pass through any additional parameters provided in the request
-        ...(body.temperature && { temperature: body.temperature }),
-        ...(body.max_tokens && { maxTokens: body.max_tokens }),
-        ...(body.top_p && { topP: body.top_p }),
-        ...(body.frequency_penalty && {
-          frequencyPenalty: body.frequency_penalty,
-        }),
-        ...(body.presence_penalty && {
-          presencePenalty: body.presence_penalty,
-        }),
-        ...(body.reasoning && { reasoning: body.reasoning }),
-        seed: body.seed ? Number(body.seed) : undefined,
-      });
-
-      // Return a data stream response that works with the useChat hook
-      // Respect the requested protocol format
-      if (streamProtocol === "text") {
-        return result.toTextStreamResponse();
-      } else {
-        // Default to data format
-        console.log("Using data stream protocol to return response");
-
-        // Get the data stream response
-        const dataStreamResponse = result.toDataStreamResponse();
-
-        // Clone the response to inspect its content without consuming it
-        const responseClone = dataStreamResponse.clone();
-
-        // Log the response headers
-        console.log(
-          "Data Stream Response Headers:",
-          Object.fromEntries([...responseClone.headers.entries()])
-        );
-
-        // Attempt to log a sample of the response body if possible
-        responseClone.body
-          ?.getReader()
-          .read()
-          .then(({ value }) => {
-            if (value) {
-              const sampleText = new TextDecoder().decode(value).slice(0, 200);
-              console.log("Data Stream Sample (first 200 chars):", sampleText);
-            }
-          })
-          .catch((err) => {
-            console.error("Error reading response sample:", err);
-          });
-
-        // Convert the response to a compatible format for our client
-        return createCompatibleDataStream(dataStreamResponse);
-      }
-    } else {
-      // For non-streaming responses, use the OpenAI SDK directly
-      const { OpenAI } = await import("openai");
-
-      const openai = new OpenAI({
-        apiKey,
-        baseURL: baseUrl,
-      });
-
-      // Convert messages to the format expected by OpenAI using our helper function
-      const processedMessages = processMessages(messages, body.options);
-
-      // Then convert to OpenAI format
-      const openaiMessages: ChatCompletionMessageParam[] =
-        processedMessages.map((msg: ValidatedMessage) => ({
-          role: msg.role === "data" ? "assistant" : msg.role, // OpenAI doesn't support "data" role
-          content: msg.content,
-          ...(msg.name && { name: msg.name }),
-        }));
-
-      const response = await openai.chat.completions.create({
-        model,
-        messages: openaiMessages,
-        stream: false,
-        // Pass through any additional parameters
-        ...(body.reasoning && { reasoning: body.reasoning }),
-        ...(body.temperature && { temperature: body.temperature }),
-        ...(body.max_tokens && { max_tokens: body.max_tokens }),
-        ...(body.top_p && { top_p: body.top_p }),
-        ...(body.frequency_penalty && {
-          frequency_penalty: body.frequency_penalty,
-        }),
-        ...(body.presence_penalty && {
-          presence_penalty: body.presence_penalty,
-        }),
-      });
-
-      return NextResponse.json(response);
-    }
-  } catch (error) {
-    console.error("Proxy error:", error);
-
-    // Return a structured error response
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : String(error),
-      } as ErrorResponse,
-      { status: 500 }
+    return (
+      message.content.trim().length > 0 ||
+      (Array.isArray(message.toolInvocations) &&
+        message.toolInvocations.length > 0)
     );
+  });
+}
+
+/**
+ * Sanitizes messages for UI display
+ */
+export function sanitizeUIMessages(messages: Array<Message>): Array<Message> {
+  return messages.filter((message) => {
+    if (message.role !== "assistant") {
+      return true;
+    }
+
+    return (
+      message.content.trim().length > 0 ||
+      (Array.isArray(message.toolInvocations) &&
+        message.toolInvocations.length > 0)
+    );
+  });
+}
+
+/**
+ * Returns the most recent user message from the array
+ */
+export function getMostRecentUserMessage(messages: Array<Message>) {
+  return messages.findLast((message) => message.role === "user");
+}
+
+/**
+ * Gets the timestamp for a document at a specific index
+ */
+export function getDocumentTimestampByIndex(
+  documents: Array<Document>,
+  index: number
+) {
+  if (!documents) return new Date();
+  if (index >= documents.length) return new Date();
+
+  return documents[index].createdAt;
+}
+
+/**
+ * Find the message that a response should be to - this is the last user message in the chat
+ * @param messages Array of chat messages
+ * @returns Message ID of the message being responded to
+ */
+export function findLastUserMessageId(messages: Message[]): string | null {
+  // Always start from the most recent message and work backwards
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") {
+      return messages[i].id;
+    }
   }
+  return null;
+}
+
+/**
+ * Updates the parent message's children list when a new message is generated
+ * @param messages Current message array
+ * @param message New message to process
+ * @param preservedMessageId Optional ID of message being preserved (for retry)
+ * @returns Updated messages array
+ */
+export function updateMessageRelationships(
+  messages: Message[],
+  message: ExtendedMessage,
+  preservedMessageId?: string
+): Message[] {
+  // Create a working copy of messages that all have the extended fields
+  const currentMessages = messages.map((msg) => ensureExtendedMessage(msg));
+
+  // For a new assistant message, the parent should be the last user message
+  // For a new user message, the parent should be the last assistant message if any
+  let parentMessageId = message.parent_id || null;
+
+  // If parent_id isn't set yet, find the appropriate parent
+  if (!parentMessageId) {
+    if (message.role === "assistant") {
+      // Find the most recent user message
+      for (let i = currentMessages.length - 1; i >= 0; i--) {
+        if (currentMessages[i].role === "user") {
+          parentMessageId = currentMessages[i].id;
+          break;
+        }
+      }
+    } else if (message.role === "user") {
+      // Find the most recent assistant message if any
+      for (let i = currentMessages.length - 1; i >= 0; i--) {
+        if (currentMessages[i].role === "assistant") {
+          parentMessageId = currentMessages[i].id;
+          break;
+        }
+      }
+    }
+  }
+
+  // Update the message's parent_id
+  const updatedMessage = {
+    ...message,
+    parent_id: parentMessageId,
+    children_ids: message.children_ids || [],
+    // Ensure model is never null for assistant messages
+    model:
+      message.role === "assistant" ? message.model || "unknown" : message.model,
+    parts: Array.isArray(message.parts) ? message.parts : [],
+  };
+
+  // Find the parent message and update its children_ids
+  if (parentMessageId) {
+    const parentIndex = currentMessages.findIndex(
+      (m) => m.id === parentMessageId
+    );
+
+    if (parentIndex >= 0) {
+      const parent = currentMessages[parentIndex];
+      // Ensure children_ids is an array even if undefined
+      const childrenIds = parent.children_ids || [];
+
+      // Add this message to the parent's children if not already there
+      if (!childrenIds.includes(message.id)) {
+        currentMessages[parentIndex] = {
+          ...parent,
+          children_ids: [...childrenIds, message.id],
+        } as Message;
+      }
+    }
+  }
+
+  // Replace or add the message in the array
+  const messageIndex = currentMessages.findIndex((m) => m.id === message.id);
+  if (messageIndex >= 0) {
+    currentMessages[messageIndex] = updatedMessage as Message;
+  } else {
+    currentMessages.push(updatedMessage as Message);
+  }
+
+  return currentMessages as Message[];
+}
+
+/**
+ * Prepares a message with proper parent-child relationships
+ * @param message The message to prepare
+ * @param messages The current message array to establish relationships from
+ * @param selectedModelId The model ID to use
+ * @returns Prepared message with relationships
+ */
+export function prepareMessageWithRelationships(
+  message: Message,
+  messages: Message[],
+  selectedModelId: string
+): Message {
+  // Create a copy of the message to avoid mutation
+  const messageCopy = { ...message };
+  let parentMessageId = null;
+
+  // For assistant messages, parent should be the last user message
+  if (message.role === "assistant") {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "user") {
+        parentMessageId = messages[i].id;
+        break;
+      }
+    }
+  }
+  // For user messages, parent should be the last assistant message if any
+  else if (message.role === "user" && messages.length > 0) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "assistant") {
+        parentMessageId = messages[i].id;
+        break;
+      }
+    }
+  }
+
+  return {
+    ...messageCopy,
+    parent_id: parentMessageId,
+    children_ids: (messageCopy as ExtendedMessage).children_ids || [],
+    // For assistant messages, always set the model
+    model:
+      message.role === "assistant"
+        ? selectedModelId || "unknown"
+        : (messageCopy as ExtendedMessage).model,
+    // Ensure parts is defined for compatibility
+    parts: Array.isArray((messageCopy as any).parts)
+      ? (messageCopy as any).parts
+      : [],
+  } as Message;
+}
+
+/**
+ * Saves chat messages to the database
+ * @param chatId The chat ID
+ * @param messages Array of messages to save
+ * @returns Promise that resolves when save is complete
+ */
+export async function saveChatMessages(
+  chatId: string,
+  messages: Message[]
+): Promise<Response> {
+  // Final check to ensure all assistant messages have a model
+  const sanitizedMessages = messages.map((message) => {
+    if (message.role === "assistant") {
+      const extMessage = message as ExtendedMessage;
+      // If model is null or undefined, set it to "unknown"
+      if (!extMessage.model) {
+        return {
+          ...message,
+          model: "unknown",
+        };
+      }
+    }
+    return message;
+  });
+
+  return fetch(`/api/chat/messages?id=${chatId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages: sanitizedMessages }),
+  });
+}
+
+/**
+ * Safely converts a standard Message to an ExtendedMessage
+ * ensuring all required properties are present
+ * @param message The message to convert
+ * @returns Message with all ExtendedMessage properties
+ */
+export function ensureExtendedMessage(message: Message): ExtendedMessage {
+  const extendedMessage = message as ExtendedMessage;
+  return {
+    ...message,
+    parent_id: extendedMessage.parent_id || null,
+    children_ids: extendedMessage.children_ids || [],
+    // For assistant messages, ensure model is never null
+    model:
+      message.role === "assistant"
+        ? extendedMessage.model || "unknown"
+        : extendedMessage.model,
+    parts: Array.isArray(extendedMessage.parts) ? extendedMessage.parts : [],
+  };
 }
 
 // Helper function to process messages and handle branch logic
-function processMessages(
+export function processMessages(
   messages: ValidatedMessage[],
   options?: {
     parentMessageId?: string;
@@ -421,7 +399,7 @@ function processMessages(
 }
 
 // Deduplicate user messages with the same content (keeps the one with children_ids)
-function removeDuplicateUserMessages(
+export function removeDuplicateUserMessages(
   messages: ValidatedMessage[]
 ): ValidatedMessage[] {
   const seen = new Map<string, ValidatedMessage>();
@@ -491,7 +469,7 @@ function removeDuplicateUserMessages(
 }
 
 // Add a utility function to convert custom stream format to format expected by streamChatMessage
-async function createCompatibleDataStream(
+export async function createCompatibleDataStream(
   response: Response
 ): Promise<Response> {
   // Create a TransformStream to modify the data

@@ -1,6 +1,7 @@
 import { PreviewMessage } from "./message";
 import { useScrollToBottom } from "./use-scroll-to-bottom";
-import { ChatRequestOptions, Message } from "ai";
+import { Message } from "ai";
+import { ChatRequestOptions } from "@/hooks/use-ai-chat";
 import { memo } from "react";
 import { UIArtifact } from "./artifact";
 

@@ -2,7 +2,8 @@ import { PreviewMessage } from "./message";
 import { useScrollToBottom } from "./use-scroll-to-bottom";
 import { memo } from "react";
 import { UIBlock } from "./block";
-import { ChatRequestOptions, Message } from "ai";
+import { Message } from "ai";
+import { ExtendedRequestOptions } from "@/hooks/use-ai-chat";
 
 interface BlockMessagesProps {
   chatId: string;
@@ -12,7 +13,7 @@ interface BlockMessagesProps {
     messages: Message[] | ((messages: Message[]) => Message[])
   ) => void;
   reload: (
-    chatRequestOptions?: ChatRequestOptions
+    chatRequestOptions?: ExtendedRequestOptions
   ) => Promise<string | null | undefined>;
   blockStatus: UIBlock["status"];
 }
@@ -39,7 +40,7 @@ function PureBlockMessages({
           message={message}
           isLoading={isLoading && index === messages.length - 1}
           setMessages={setMessages}
-          reload={reload}
+          reload={reload as any}
         />
       ))}
 

@@ -5,6 +5,7 @@ import {
   ChevronDown,
   LucideProps,
   ChevronRight,
+  ChevronLeft,
   Folder,
   ArchiveRestore,
   Archive,
@@ -1104,3 +1105,7 @@ export const FullscreenIcon = ({ size = 16 }: { size?: number }) => (
     ></path>
   </svg>
 );
+
+export const ChevronLeftIcon = ({ size = 16, className }: LucideProps) => {
+  return <ChevronLeft width={size} height={size} className={className} />;
+};

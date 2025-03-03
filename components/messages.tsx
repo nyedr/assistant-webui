@@ -1,7 +1,7 @@
 import { PreviewMessage, ThinkingMessage } from "./message";
 import { useScrollToBottom } from "./use-scroll-to-bottom";
 import { memo, useRef, useEffect } from "react";
-import { ChatRequestOptions, Message } from "ai";
+import { Message } from "ai";
 import { cn } from "@/lib/utils";
 
 interface MessagesProps {
@@ -12,9 +12,8 @@ interface MessagesProps {
   setMessages: (
     messages: Message[] | ((messages: Message[]) => Message[])
   ) => void;
-  reload: (
-    chatRequestOptions?: ChatRequestOptions
-  ) => Promise<string | null | undefined>;
+  reload: (chatRequestOptions?: any) => Promise<string | null | undefined>;
+  retryMessage?: (messageId: string) => Promise<string | null | undefined>;
   scrollToMessage?: (scrollFn: (messageId: string) => void) => void;
 }
 
@@ -25,6 +24,7 @@ function MessagesComponent({
   chatId,
   setMessages,
   reload,
+  retryMessage,
   scrollToMessage,
 }: MessagesProps) {
   // Track the previous message count to determine if new messages were added
@@ -73,6 +73,8 @@ function MessagesComponent({
           isLoading={isLoading}
           setMessages={setMessages}
           reload={reload}
+          retryMessage={retryMessage}
+          scrollToMessage={scrollToMessageFn}
         />
       ))}
       {isLoading && <ThinkingMessage />}

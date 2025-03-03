@@ -1,6 +1,5 @@
 "use client";
 
-import cx from "classnames";
 import {
   AnimatePresence,
   motion,
@@ -23,7 +22,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { sanitizeUIMessages } from "@/lib/utils";
+import { cn, sanitizeUIMessages } from "@/lib/utils";
 
 import {
   ArrowUpIcon,
@@ -35,7 +34,8 @@ import {
   SummarizeIcon,
 } from "./icons";
 import { BlockKind } from "./block";
-import { Message, CreateMessage, ChatRequestOptions } from "ai";
+import { Message, CreateMessage } from "ai";
+import { ChatRequestOptions } from "@/hooks/use-ai-chat";
 
 type ToolProps = {
   type:
@@ -130,7 +130,7 @@ const Tool = ({
     <Tooltip open={isHovered && !isAnimating}>
       <TooltipTrigger asChild>
         <motion.div
-          className={cx("p-3 rounded-full", {
+          className={cn("p-3 rounded-full", {
             "bg-primary !text-primary-foreground": selectedTool === type,
           })}
           onHoverStart={() => {
@@ -230,7 +230,7 @@ const ReadingLevelSelector = ({
         <Tooltip open={!isAnimating}>
           <TooltipTrigger asChild>
             <motion.div
-              className={cx(
+              className={cn(
                 "absolute bg-background p-3 border rounded-full flex flex-row items-center",
                 {
                   "bg-primary text-primary-foreground": currentLevel !== 2,

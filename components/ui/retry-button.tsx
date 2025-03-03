@@ -12,6 +12,9 @@ export interface RetryButtonProps
   onRetry: () => Promise<string | null | undefined>;
   isLoading?: boolean;
   asChild?: boolean;
+  messageId?: string;
+  chatId?: string;
+  model?: string;
 }
 
 const RetryButton = forwardRef<HTMLButtonElement, RetryButtonProps>(
