@@ -1,13 +1,39 @@
-import type { Message } from "ai";
+import { Message } from "ai";
+import { z } from "zod";
 import type { Document } from "@/lib/db/schema";
-import { ValidatedMessage } from "@/app/(chat)/api/chat/messages/route";
 
-// Extended Message type with additional properties
+// Base message schema that can be used for validation
+export const messageSchema = z.object({
+  id: z.string(),
+  role: z.enum(["user", "assistant", "system", "tool"]),
+  content: z.string(),
+  createdAt: z.union([z.string(), z.date()]),
+  // Optional fields
+  parent_id: z.string().nullable().optional(),
+  children_ids: z.array(z.string()).optional(),
+  model: z.string().optional(),
+  data: z.any().optional(), // Using any() to avoid JSONValue compatibility issues
+  experimental_attachments: z.array(z.any()).optional(),
+  annotations: z.array(z.any()).optional(),
+  toolInvocations: z.array(z.any()).optional(),
+  reasoning: z.string().optional(),
+  parts: z.array(z.any()).optional(),
+});
+
+// Type based on the schema for use throughout the application
+export type ValidatedMessage = z.infer<typeof messageSchema>;
+
+// Extended message type with all possible fields
 export interface ExtendedMessage extends Message {
   parent_id?: string | null;
   children_ids?: string[];
   model?: string;
   parts?: any[];
+  data?: any; // Changed to any to match Message's JSONValue type
+  experimental_attachments?: any[];
+  annotations?: any[];
+  toolInvocations?: any[];
+  reasoning?: string;
 }
 
 // Extended ChatRequestOptions type
@@ -404,6 +430,7 @@ export function removeDuplicateUserMessages(
 ): ValidatedMessage[] {
   const seen = new Map<string, ValidatedMessage>();
   const contentMap = new Map<string, ValidatedMessage[]>();
+  const idMap = new Map<string, string>(); // Maps removed ID -> keeper ID
 
   // Group user messages by content
   messages
@@ -432,40 +459,90 @@ export function removeDuplicateUserMessages(
         (m) => m.children_ids && m.children_ids.length > 0
       );
 
+      let keeper: ValidatedMessage;
+
       if (withChildren.length > 0) {
         // Keep the one with most children
-        const keeper = withChildren.sort(
+        keeper = withChildren.sort(
           (a, b) =>
             (b.children_ids?.length || 0) - (a.children_ids?.length || 0)
         )[0];
-
-        // Mark others for removal
-        msgs.forEach((m) => {
-          if (m.id !== keeper.id) {
-            toRemove.add(m.id);
-            console.log(`Marking duplicate user message for removal: ${m.id}`);
-          }
-        });
       } else {
         // If none have children, keep the most recent one
-        const keeper = msgs.sort((a, b) => {
+        keeper = msgs.sort((a, b) => {
           const dateA = a.createdAt ? new Date(a.createdAt) : new Date(0);
           const dateB = b.createdAt ? new Date(b.createdAt) : new Date(0);
           return dateB.getTime() - dateA.getTime();
         })[0];
-
-        msgs.forEach((m) => {
-          if (m.id !== keeper.id) {
-            toRemove.add(m.id);
-            console.log(`Marking duplicate user message for removal: ${m.id}`);
-          }
-        });
       }
+
+      // Mark others for removal and map their IDs to the keeper
+      msgs.forEach((m) => {
+        if (m.id !== keeper.id) {
+          toRemove.add(m.id);
+          idMap.set(m.id, keeper.id); // Map removed ID to keeper ID
+          console.log(
+            `Marking duplicate user message for removal: ${m.id} -> ${keeper.id}`
+          );
+        }
+      });
     }
   });
 
+  // Process messages before filtering
+  // First, gather all children for removed parents
+  const keeperChildren = new Map<string, Set<string>>();
+
+  messages.forEach((msg) => {
+    if (msg.parent_id && idMap.has(msg.parent_id)) {
+      // This message's parent is being removed, reassign to keeper
+      const keeperId = idMap.get(msg.parent_id)!;
+
+      if (!keeperChildren.has(keeperId)) {
+        keeperChildren.set(keeperId, new Set<string>());
+      }
+
+      keeperChildren.get(keeperId)!.add(msg.id);
+      console.log(
+        `Reassigning child ${msg.id} from ${msg.parent_id} to ${keeperId}`
+      );
+    }
+  });
+
+  // Then create a new array with updated relationships
+  const updatedMessages = messages.map((msg) => {
+    // If this message is being removed, no need to process further
+    if (toRemove.has(msg.id)) return msg;
+
+    // If this message is a keeper that's getting children from removed duplicates
+    if (keeperChildren.has(msg.id)) {
+      const children = new Set(msg.children_ids || []);
+
+      // Add all reassigned children
+      keeperChildren.get(msg.id)!.forEach((childId) => {
+        children.add(childId);
+      });
+
+      return {
+        ...msg,
+        children_ids: Array.from(children),
+      };
+    }
+
+    // If this message's parent was removed, update the parent_id
+    if (msg.parent_id && idMap.has(msg.parent_id)) {
+      return {
+        ...msg,
+        parent_id: idMap.get(msg.parent_id),
+      };
+    }
+
+    // Otherwise keep as is
+    return msg;
+  });
+
   // Filter out the messages marked for removal
-  return messages.filter((msg) => !toRemove.has(msg.id));
+  return updatedMessages.filter((msg) => !toRemove.has(msg.id));
 }
 
 // Add a utility function to convert custom stream format to format expected by streamChatMessage
@@ -684,4 +761,191 @@ export async function createCompatibleDataStream(
       Connection: "keep-alive",
     },
   });
+}
+
+/**
+ * Normalizes a message to ensure all expected fields are present
+ * with proper defaults
+ */
+export function normalizeMessage(
+  message: Message | Partial<ExtendedMessage>
+): ExtendedMessage {
+  // Cast to access ExtendedMessage properties safely
+  const extMsg = message as Partial<ExtendedMessage>;
+
+  return {
+    // Set defaults for required fields
+    id: message.id || crypto.randomUUID(),
+    role: message.role || "user",
+    content: message.content || "",
+    createdAt: message.createdAt || new Date().toISOString(),
+
+    // Set defaults for optional fields
+    parent_id: extMsg.parent_id === undefined ? null : extMsg.parent_id,
+    children_ids: Array.isArray(extMsg.children_ids) ? extMsg.children_ids : [],
+    model:
+      message.role === "assistant" ? extMsg.model || "unknown" : extMsg.model,
+    parts: Array.isArray(extMsg.parts) ? extMsg.parts : [],
+  } as ExtendedMessage;
+}
+
+/**
+ * Merge two collections of messages, handling duplicates intelligently.
+ * This is useful when adding new messages to existing ones.
+ */
+export function mergeMessages(
+  existingMessages: ExtendedMessage[] = [],
+  newMessages: ExtendedMessage[] = []
+): ExtendedMessage[] {
+  // Create a map for faster lookup
+  const messageMap = new Map<string, ExtendedMessage>();
+
+  // Add existing messages first
+  existingMessages.forEach((msg) => {
+    messageMap.set(msg.id, normalizeMessage(msg));
+  });
+
+  // Process new messages, handling duplicates
+  newMessages.forEach((msg) => {
+    if (messageMap.has(msg.id)) {
+      // Update existing message, preserving non-empty values
+      const existingMsg = messageMap.get(msg.id)!;
+
+      // Special handling for assistant messages to preserve model
+      if (msg.role === "assistant" && existingMsg.role === "assistant") {
+        messageMap.set(msg.id, {
+          ...existingMsg,
+          ...msg,
+          // Preserve non-empty values
+          content: msg.content || existingMsg.content,
+          children_ids: msg.children_ids || existingMsg.children_ids,
+          parent_id: msg.parent_id ?? existingMsg.parent_id,
+          // Carefully preserve model information - don't override with undefined
+          model:
+            existingMsg.model && (!msg.model || msg.model === "unknown")
+              ? existingMsg.model // Keep existing model if new one is missing or unknown
+              : msg.model || existingMsg.model, // Otherwise use the new model if specified
+        });
+      } else {
+        // For non-assistant messages, update normally
+        messageMap.set(msg.id, {
+          ...existingMsg,
+          ...msg,
+          // Preserve non-empty values
+          content: msg.content || existingMsg.content,
+          children_ids: msg.children_ids || existingMsg.children_ids,
+          parent_id: msg.parent_id ?? existingMsg.parent_id,
+          model: msg.model || existingMsg.model,
+        });
+      }
+    } else {
+      // Add new message
+      messageMap.set(msg.id, normalizeMessage(msg));
+    }
+  });
+
+  return Array.from(messageMap.values());
+}
+
+/**
+ * Finds duplicates of a user message based on content and parent_id
+ */
+export function findDuplicateUserMessage(
+  messageToCheck: ExtendedMessage,
+  messages: ExtendedMessage[]
+): string | null {
+  if (messageToCheck.role !== "user") return null;
+
+  for (const msg of messages) {
+    if (
+      msg.role === "user" &&
+      msg.content === messageToCheck.content &&
+      msg.parent_id === messageToCheck.parent_id &&
+      msg.id !== messageToCheck.id
+    ) {
+      return msg.id;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Establishes or repairs parent-child relationships in a message collection
+ */
+export function establishMessageRelationships(
+  messages: ExtendedMessage[]
+): ExtendedMessage[] {
+  // Sort chronologically first
+  const sortedMessages = [...messages].sort((a, b) => {
+    // Handle potential undefined dates safely
+    const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return aTime - bTime;
+  });
+
+  // First pass: Apply basic relationship rules to all messages
+  const messagesWithBasicRelationships = sortedMessages.map((message, i) => {
+    const messageWithRelationships = { ...message };
+
+    // Initialize children_ids if it doesn't exist
+    messageWithRelationships.children_ids =
+      messageWithRelationships.children_ids || [];
+
+    // Ensure parent_id is explicitly set to null for the first message
+    if (i === 0) {
+      messageWithRelationships.parent_id = null;
+    } else if (!messageWithRelationships.parent_id) {
+      // Only set parent_id if it's not already set
+      // Find the most recent message of the opposite role before this message
+      let mostRecentOppositeRoleMessage = null;
+      for (let j = i - 1; j >= 0; j--) {
+        if (sortedMessages[j].role !== message.role) {
+          mostRecentOppositeRoleMessage = sortedMessages[j];
+          break;
+        }
+      }
+
+      // If this is an assistant message and we found a user message before it,
+      // or this is a user message and we found an assistant message before it,
+      // then set the parent_id to that message
+      if (mostRecentOppositeRoleMessage) {
+        messageWithRelationships.parent_id = mostRecentOppositeRoleMessage.id;
+      } else {
+        // If no opposite role message found, set parent_id to null
+        messageWithRelationships.parent_id = null;
+      }
+    }
+
+    return messageWithRelationships;
+  });
+
+  // Second pass: Update children_ids arrays based on the parent_id values
+  // This ensures bidirectional relationships are maintained
+  const finalMessages = messagesWithBasicRelationships.map((message) => {
+    // Start with a clean children_ids array
+    // We'll rebuild it based on who has this message as parent
+    return {
+      ...message,
+      children_ids: [] as string[],
+    };
+  });
+
+  // Now populate children_ids by looking at parent_id references
+  finalMessages.forEach((message) => {
+    if (message.parent_id) {
+      // Find the parent message
+      const parentIndex = finalMessages.findIndex(
+        (m) => m.id === message.parent_id
+      );
+      if (parentIndex !== -1) {
+        // Add this message's ID to the parent's children_ids if not already there
+        if (!finalMessages[parentIndex].children_ids.includes(message.id)) {
+          finalMessages[parentIndex].children_ids.push(message.id);
+        }
+      }
+    }
+  });
+
+  return finalMessages;
 }

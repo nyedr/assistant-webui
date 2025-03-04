@@ -19,6 +19,7 @@ import {
   ExtendedMessage,
 } from "@/lib/utils/messages";
 import { generateUUID } from "@/lib/utils";
+import logger from "@/lib/utils/logger";
 
 // Define our own ChatRequestOptions that includes what we need
 export type ChatRequestOptions = AIRequestOptions & {
@@ -347,14 +348,10 @@ export function useAIChat({
   const handleUpdate = useCallback(
     ({
       message,
-      data,
       replaceLastMessage,
-      finishReason,
     }: {
       message: ChatExtendedMessage;
-      data: any[] | undefined;
       replaceLastMessage: boolean;
-      finishReason?: string;
     }) => {
       mutateStatus("streaming");
 
@@ -367,7 +364,7 @@ export function useAIChat({
         createdAt: message.createdAt,
         parent_id: message.parent_id,
         children_ids: message.children_ids || [],
-        model: message.model,
+        model: message.model || model || "unknown",
         parts: message.parts || [],
       };
 
@@ -494,7 +491,7 @@ export function useAIChat({
         const result = await streamChatMessage({
           messages: apiMessages as Message[],
           id: chatId,
-          model: metaRef.current.model,
+          model: metaRef.current.model || model,
           api,
           streamProtocol,
           headers: {
@@ -515,6 +512,16 @@ export function useAIChat({
             // Set status to ready
             mutateStatus("ready");
 
+            // Log finish information with detailed context
+            logger.debug("Chat message stream finished", {
+              module: "useAIChat",
+              context: {
+                messageId: message.id,
+                finishReason,
+                modelUsed: message.model,
+              },
+            });
+
             // Clear abort controller
             abortControllerRef.current = null;
 
@@ -527,7 +534,7 @@ export function useAIChat({
               createdAt: message.createdAt,
               parent_id: message.parent_id,
               children_ids: message.children_ids || [],
-              model: message.model,
+              model: message.model || model || "unknown",
               parts: message.parts || [],
             };
 
@@ -536,9 +543,17 @@ export function useAIChat({
               return updateMessageRelationships(currentMsgs, compatibleMessage);
             }, false);
 
-            // Call user's onFinish if provided
+            // Call user-provided onFinish callback if available
             if (onFinish) {
-              onFinish(message, finishReason);
+              try {
+                onFinish(message, finishReason);
+              } catch (error) {
+                logger.error(
+                  "Error in user-provided onFinish callback",
+                  error instanceof Error ? error : new Error(String(error)),
+                  { module: "useAIChat" }
+                );
+              }
             }
           },
           onToolCall,
@@ -944,7 +959,7 @@ export function useAIChat({
       const messageContent = messageToRetry.content;
       const messageParts = messageToRetry.parts || [];
       const messageData = messageToRetry.data || {};
-      const messageModel = messageToRetry.model || "unknown";
+      const messageModel = messageToRetry.model || model || "unknown";
 
       // Ensure we preserve the existing assistant messages associated with this parent
       // Instead of removing them from the UI while generating a new one
@@ -973,7 +988,7 @@ export function useAIChat({
             content: msg.content,
             parts: msg.parts || [],
             data: msg.data || {},
-            model: msg.model || "unknown",
+            model: msg.model || model || "unknown",
           });
         });
 
@@ -987,7 +1002,7 @@ export function useAIChat({
               content: savedContent.content || msg.content,
               parts: savedContent.parts || msg.parts || [],
               data: savedContent.data || msg.data || {},
-              model: savedContent.model || msg.model || "unknown",
+              model: savedContent.model || msg.model || model || "unknown",
             };
           }
           return msg;
@@ -1026,7 +1041,7 @@ export function useAIChat({
                 data: Object.keys(messageData).length
                   ? messageData
                   : msg.data || {},
-                model: messageModel || msg.model || "unknown",
+                model: messageModel || msg.model || model || "unknown",
               };
             }
             return msg;

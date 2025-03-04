@@ -1008,6 +1008,8 @@ export async function streamChat(
           id: msg.id,
           role: msg.role,
           content: msg.content,
+          // Ensure createdAt is always present
+          createdAt: msg.createdAt || new Date().toISOString(),
         };
       }),
       model: options.model,
@@ -1040,10 +1042,17 @@ export async function streamChat(
 
     // Check for error responses
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(
-        `HTTP error ${response.status}${errorText ? `: ${errorText}` : ""}`
-      );
+      try {
+        // Use our safe error handler that clones the response
+        await handleResponseError(response);
+      } catch (error) {
+        // Call onError callback if provided
+        if (options.onError && error instanceof Error) {
+          options.onError(error);
+        }
+        // Re-throw the error to propagate it
+        throw error;
+      }
     }
 
     // Check if we have a body to read from
@@ -1247,6 +1256,8 @@ export async function streamChatMessage({
         id: message.id,
         role: message.role,
         content: message.content,
+        // Ensure createdAt is always present
+        createdAt: message.createdAt || new Date().toISOString(),
         ...(message.experimental_attachments && {
           experimental_attachments: message.experimental_attachments,
         }),
@@ -1313,12 +1324,17 @@ export async function streamChatMessage({
         }
       }
 
-      const errorText = await response
-        .text()
-        .catch((e) => `Failed to read error response: ${e.message}`);
-      throw new Error(
-        `HTTP error ${response.status}${errorText ? `: ${errorText}` : ""}`
-      );
+      try {
+        // Use our safe error handler that clones the response
+        await handleResponseError(response);
+      } catch (error) {
+        // Call onError callback if provided
+        if (onError && error instanceof Error) {
+          onError(error);
+        }
+        // Re-throw the error to propagate it
+        throw error;
+      }
     }
 
     // Check if we have a body to read from
@@ -1458,4 +1474,109 @@ export async function streamChatMessage({
     reader = null;
     response = null;
   }
+}
+
+/**
+ * Safely handle error responses by cloning the response before reading
+ * This prevents the "body stream already read" error when multiple handlers
+ * try to read the same response
+ *
+ * @param response The error response to handle
+ * @returns Never returns, always throws an error
+ */
+export async function handleResponseError(response: Response): Promise<never> {
+  // Clone the response before reading it
+  const clonedResponse = response.clone();
+
+  try {
+    // Try to parse as JSON first
+    const errorData = await clonedResponse.json();
+
+    // Check if it's a validation error with a nested structure
+    if (
+      errorData._errors ||
+      (errorData.messages && errorData.messages._errors)
+    ) {
+      // Format validation errors in a more readable way
+      const formattedError = formatValidationErrors(errorData);
+      throw new Error(
+        `Validation error (${response.status}): ${formattedError}`
+      );
+    }
+
+    throw new Error(
+      `HTTP error ${response.status}: ${
+        errorData.error || JSON.stringify(errorData)
+      }`
+    );
+  } catch (e) {
+    // If the error is already formatted, just re-throw it
+    if (e instanceof Error && e.message.startsWith("Validation error")) {
+      throw e;
+    }
+
+    // If JSON parsing fails, read as text
+    try {
+      const errorText = await response.text();
+      throw new Error(`HTTP error ${response.status}: ${errorText}`);
+    } catch (textError) {
+      // If we can't read the body at all, just throw with status
+      throw new Error(
+        `HTTP error ${response.status}: Failed to read error details`
+      );
+    }
+  }
+}
+
+/**
+ * Format validation errors into a readable string
+ */
+function formatValidationErrors(errors: any): string {
+  if (!errors) return "Unknown validation error";
+
+  // Simple case: top level errors
+  if (
+    errors._errors &&
+    Array.isArray(errors._errors) &&
+    errors._errors.length > 0
+  ) {
+    return errors._errors.join(", ");
+  }
+
+  // Complex case: nested errors
+  const formattedErrors: string[] = [];
+
+  // Helper function to recursively collect error messages
+  function collectErrors(obj: any, path: string = "") {
+    if (!obj) return;
+
+    // Handle arrays
+    if (Array.isArray(obj)) {
+      obj.forEach((item, index) => {
+        collectErrors(item, path ? `${path}[${index}]` : `[${index}]`);
+      });
+      return;
+    }
+
+    // Handle objects
+    if (typeof obj === "object") {
+      // Collect direct errors
+      if (obj._errors && Array.isArray(obj._errors) && obj._errors.length > 0) {
+        formattedErrors.push(`${path || "Root"}: ${obj._errors.join(", ")}`);
+      }
+
+      // Recurse into nested objects
+      for (const key in obj) {
+        if (key !== "_errors") {
+          collectErrors(obj[key], path ? `${path}.${key}` : key);
+        }
+      }
+    }
+  }
+
+  collectErrors(errors);
+
+  return formattedErrors.length > 0
+    ? formattedErrors.join("; ")
+    : "Invalid request format";
 }
