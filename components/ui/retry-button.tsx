@@ -25,6 +25,9 @@ const RetryButton = forwardRef<HTMLButtonElement, RetryButtonProps>(
       asChild = false,
       className,
       onClick,
+      messageId,
+      chatId,
+      model,
       ...props
     },
     ref

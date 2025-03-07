@@ -3,10 +3,13 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Message, Attachment } from "ai";
 // Import generic types instead of specific ones that don't exist
-import type { RequestOptions as AIRequestOptions } from "ai";
+import type {
+  RequestOptions as AIRequestOptions,
+  JSONValue,
+  ToolCall,
+} from "ai";
 import useSWR from "swr";
 import {
-  streamChatMessage,
   ExtendedMessage as ChatExtendedMessage,
   StreamProtocol,
 } from "@/lib/utils/chat";
@@ -20,6 +23,7 @@ import {
 } from "@/lib/utils/messages";
 import { generateUUID } from "@/lib/utils";
 import logger from "@/lib/utils/logger";
+import { callChatApi, UIMessage } from "@ai-sdk/ui-utils";
 
 // Define our own ChatRequestOptions that includes what we need
 export type ChatRequestOptions = AIRequestOptions & {
@@ -208,15 +212,158 @@ export interface UseAIChatHelpers {
   id: string;
 }
 
+// Define an adapter function that converts between our custom types and the types expected by callChatApi
+async function adaptCallChatApi({
+  messages,
+  id,
+  model,
+  api,
+  streamProtocol,
+  headers,
+  body,
+  attachments,
+  abortController,
+  onResponse,
+  onUpdate: handleUpdate,
+  onStreamPart,
+  onFinish,
+  onToolCall,
+  onError,
+  restoreMessagesOnFailure,
+  replaceLastMessage,
+  lastMessage,
+}: {
+  messages: Message[];
+  id: string;
+  model: string;
+  api: string;
+  streamProtocol: StreamProtocol;
+  headers?: Record<string, string>;
+  body?: Record<string, any>;
+  attachments?: Attachment[];
+  abortController: (() => AbortController | null) | undefined;
+  onResponse?: (response: Response) => void | Promise<void>;
+  onUpdate: ({
+    message,
+    replaceLastMessage,
+  }: {
+    message: ChatExtendedMessage;
+    replaceLastMessage: boolean;
+  }) => void;
+  onStreamPart?: (part: string, delta: any, type: string) => void;
+  onFinish: (
+    message: ChatExtendedMessage,
+    finishReason?: Record<string, any>
+  ) => void;
+  onToolCall?: (toolCall: {
+    toolCallId: string;
+    toolName: string;
+    args: any;
+  }) => Promise<any>;
+  onError?: (error: Error) => void;
+  restoreMessagesOnFailure?: () => void;
+  replaceLastMessage: boolean;
+  lastMessage: ChatExtendedMessage;
+}) {
+  // Adapt the lastMessage to UIMessage format
+  const adaptedLastMessage: UIMessage = {
+    id: lastMessage.id,
+    role: lastMessage.role,
+    content: lastMessage.content,
+    createdAt: lastMessage.createdAt,
+    // Ensure parts is not undefined
+    parts: lastMessage.parts || [],
+  };
+
+  // Adapt onUpdate to match expected signature
+  const adaptedOnUpdate = (options: {
+    message: UIMessage;
+    data: JSONValue[] | undefined;
+    replaceLastMessage: boolean;
+  }) => {
+    // Convert UIMessage back to ChatExtendedMessage
+    const chatExtMsg: ChatExtendedMessage = {
+      ...options.message,
+      parent_id: (options.message as any).parent_id,
+      children_ids: (options.message as any).children_ids || [],
+      model: (options.message as any).model,
+      // Preserve parts
+      parts: options.message.parts,
+      // Make sure data is Record<string, any> | undefined
+      data: options.message.data as Record<string, any> | undefined,
+    };
+
+    // Call original onUpdate
+    handleUpdate({
+      message: chatExtMsg,
+      replaceLastMessage: options.replaceLastMessage,
+    });
+  };
+
+  // Adapt onToolCall to match expected signature
+  const adaptedOnToolCall = onToolCall
+    ? ({ toolCall }: { toolCall: ToolCall<string, unknown> }) => {
+        return onToolCall({
+          toolCallId: toolCall.toolCallId || "",
+          toolName: toolCall.toolName,
+          args: toolCall.args,
+        });
+      }
+    : undefined;
+
+  // Ensure restoreMessagesOnFailure is never undefined
+  const adaptedRestoreMessagesOnFailure =
+    restoreMessagesOnFailure || (() => {});
+
+  // Call the original function with adapted parameters
+  await callChatApi({
+    api,
+    body: {
+      id,
+      ...body,
+      messages,
+      ...(attachments ? { experimental_attachments: attachments } : {}),
+    },
+    streamProtocol,
+    credentials: undefined,
+    headers,
+    abortController,
+    restoreMessagesOnFailure: adaptedRestoreMessagesOnFailure,
+    onResponse,
+    onUpdate: adaptedOnUpdate,
+    onFinish: (message, details) => {
+      // Convert UIMessage to ChatExtendedMessage
+      const adaptedMessage: ChatExtendedMessage = {
+        ...message,
+        parent_id: (message as any).parent_id,
+        children_ids: (message as any).children_ids || [],
+        model: (message as any).model || model || "unknown",
+        parts: message.parts || [],
+        data: message.data as Record<string, any> | undefined,
+      };
+
+      onFinish(adaptedMessage, details);
+    },
+    onToolCall: adaptedOnToolCall,
+    // IdGenerator is needed, but we'll use a simple implementation
+    generateId: () => crypto.randomUUID(),
+    fetch: fetch,
+    lastMessage: adaptedLastMessage,
+  });
+
+  // No need to return anything, we're not using the result
+  return null;
+}
+
 /**
  * Hook for AI chat with improved parent-child message tracking, branch handling, and retry behavior
  */
 export function useAIChat({
   id,
+  api = "/api/chat/proxy",
   initialMessages = [],
   initialInput = "",
   model,
-  api = "/api/chat/proxy",
   headers,
   body = {},
   streamProtocol = "data",
@@ -488,10 +635,10 @@ export function useAIChat({
         ] as ChatExtendedMessage;
 
         // Stream the message to the API
-        const result = await streamChatMessage({
+        await adaptCallChatApi({
           messages: apiMessages as Message[],
           id: chatId,
-          model: metaRef.current.model || model,
+          model: metaRef.current.model || model || "unknown",
           api,
           streamProtocol,
           headers: {
@@ -564,13 +711,6 @@ export function useAIChat({
           replaceLastMessage: true, // Replace during streaming for UI updates
           lastMessage,
         });
-
-        // For future use with auto-submission of tool calls
-        if (result) {
-          return result.id;
-        }
-
-        return null;
       } catch (err) {
         // Ignore abort errors as they are expected
         if ((err as any).name === "AbortError") {

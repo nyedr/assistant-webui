@@ -27,6 +27,11 @@ interface PreviewMessageProps {
   ) => Promise<string | null | undefined>;
   retryMessage?: (messageId: string) => Promise<string | null | undefined>;
   scrollToMessage?: (messageId: string) => void;
+  getBranchInfo?: (parentMessageId: string) => {
+    currentIndex: number;
+    totalBranches: number;
+  };
+  switchBranch?: (parentMessageId: string, branchIndex: number) => void;
 }
 
 const PurePreviewMessage = ({
@@ -37,6 +42,8 @@ const PurePreviewMessage = ({
   reload,
   retryMessage,
   scrollToMessage,
+  getBranchInfo,
+  switchBranch,
 }: PreviewMessageProps) => {
   const [isEditing, setIsEditing] = useState(false);
   const isMountedRef = useRef(true);
@@ -139,6 +146,8 @@ const PurePreviewMessage = ({
               message={ensureExtendedMessage(message)}
               isLoading={isLoading}
               setMessages={setMessages}
+              getBranchInfo={getBranchInfo}
+              switchBranch={switchBranch}
               reload={(options?: ExtendedRequestOptions) => {
                 if (options) {
                   const { options: _, ...standardOptions } = options;

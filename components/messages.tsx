@@ -15,6 +15,11 @@ interface MessagesProps {
   reload: (chatRequestOptions?: any) => Promise<string | null | undefined>;
   retryMessage?: (messageId: string) => Promise<string | null | undefined>;
   scrollToMessage?: (scrollFn: (messageId: string) => void) => void;
+  getBranchInfo?: (parentMessageId: string) => {
+    currentIndex: number;
+    totalBranches: number;
+  };
+  switchBranch?: (parentMessageId: string, branchIndex: number) => void;
 }
 
 function MessagesComponent({
@@ -26,6 +31,8 @@ function MessagesComponent({
   reload,
   retryMessage,
   scrollToMessage,
+  getBranchInfo,
+  switchBranch,
 }: MessagesProps) {
   // Track the previous message count to determine if new messages were added
   const prevMessageCountRef = useRef(messages.length);
@@ -75,6 +82,8 @@ function MessagesComponent({
           reload={reload}
           retryMessage={retryMessage}
           scrollToMessage={scrollToMessageFn}
+          getBranchInfo={getBranchInfo}
+          switchBranch={switchBranch}
         />
       ))}
       {isLoading && <ThinkingMessage />}

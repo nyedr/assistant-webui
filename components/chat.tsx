@@ -66,7 +66,7 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
       id: chatId,
       model: selectedModelId,
       stream: true,
-      streamProtocol: "data",
+      streamProtocol: "text",
       reasoning: {
         effort: "high",
         exclude: false,
@@ -74,7 +74,7 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
     },
     sendExtraMessageFields: true,
     experimental_throttle: 50,
-    streamProtocol: "data",
+    streamProtocol: "text",
     onResponse: async (response) => {
       if (!response.ok) {
         toast.error(`API Error: ${response.statusText}`);
@@ -139,6 +139,32 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
       setErrorState(error.message);
     },
   });
+
+  // Filter messages to only show those in the current branch path
+  const filteredMessages = useMemo(() => {
+    // If no messages or no branch state, just return all messages
+    if (!messages.length) return messages;
+
+    // Create a map of message IDs to their messages for quick lookup
+    const messageMap = new Map(messages.map((msg) => [msg.id, msg]));
+
+    // Find the last message in the current branch
+    const lastMessage = messages[messages.length - 1];
+
+    // We'll build a chain from the last message up to the root
+    const messageChain = new Set<string>();
+    let currentId: string | null | undefined = lastMessage.id;
+
+    // Traverse up the parent chain to collect all messages in this branch
+    while (currentId) {
+      messageChain.add(currentId);
+      const currentMsg = messageMap.get(currentId);
+      currentId = currentMsg?.parent_id;
+    }
+
+    // Filter messages to only include those in the current branch path
+    return messages.filter((msg) => messageChain.has(msg.id));
+  }, [messages]);
 
   // Type-safe submit handler
   const handleChatSubmit = async (
@@ -222,21 +248,21 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
       <div className="flex relative flex-col min-w-0 h-dvh bg-background">
         <ChatHeader selectedModelId={selectedModelId} />
 
-        {messages.length > 0 ? (
+        {filteredMessages.length > 0 ? (
           <div className="flex-1 overflow-y-auto md:px-5 px-2">
             <Messages
-              chatId={chatId}
+              messages={filteredMessages}
               isLoading={isLoading}
-              messages={messages}
+              isBlockVisible={isBlockVisible}
+              chatId={chatId}
               setMessages={setMessages}
               reload={reload}
               retryMessage={retryMessage}
-              isBlockVisible={isBlockVisible}
-              scrollToMessage={(fn) => {
-                if (typeof fn === "function") {
-                  scrollToMessageRef.current = fn;
-                }
+              scrollToMessage={(scrollFn) => {
+                scrollToMessageRef.current = scrollFn;
               }}
+              getBranchInfo={getBranchInfo}
+              switchBranch={switchBranch}
             />
           </div>
         ) : (
