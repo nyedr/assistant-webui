@@ -3,7 +3,7 @@ import { Toaster } from "sonner";
 import { CookiesProvider } from "next-client-cookies/server";
 
 import { ThemeProvider } from "@/components/theme-provider";
-import { ChatProvider } from "@/lib/context/chat-context";
+import { ChatProvider } from "@/lib/chat/chat-context";
 
 import "./globals.css";
 import { ReactScan } from "@/components/scan";

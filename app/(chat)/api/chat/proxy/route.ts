@@ -6,6 +6,7 @@ import { ChatCompletionMessageParam } from "openai/resources/chat/completions.mj
 import logger from "@/lib/utils/logger";
 import { createCompatibleDataStream } from "@/lib/utils/messages";
 import { messageSchema, ValidatedMessage } from "@/lib/utils/messages";
+import { handleContinuation } from "@/lib/utils/chat";
 
 // Define the request schema for validation
 const RequestSchema = z.object({
@@ -33,6 +34,18 @@ const RequestSchema = z.object({
     })
     .optional(),
   seed: z.union([z.string(), z.number()]).optional(),
+  // Add continuation parameters
+  continueMessageId: z.string().optional(),
+  originalContent: z.string().optional(),
+  isContinuation: z.boolean().optional(),
+  continuationPreferences: z
+    .object({
+      seamless: z.boolean().optional(),
+      avoidTransitions: z.boolean().optional(),
+      maintainTone: z.boolean().optional(),
+      noRepetition: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 // Error response type
@@ -87,7 +100,7 @@ function createProvider() {
 }
 
 // Define additional properties for messages in this route
-interface RouteValidatedMessage extends ValidatedMessage {
+export interface RouteValidatedMessage extends ValidatedMessage {
   name?: string;
 }
 
@@ -144,19 +157,36 @@ export async function POST(req: Request): Promise<Response> {
       id,
       stream = true,
       streamProtocol = "text",
+      continueMessageId,
+      originalContent,
+      isContinuation,
     } = body;
 
     logger.info(`Processing request for model: ${model}, chat: ${id}`, {
       module: "proxy",
-      context: { protocol: streamProtocol, stream },
+      context: {
+        protocol: streamProtocol,
+        stream,
+        isContinuation: !!isContinuation,
+        hasContinueMessageId: !!continueMessageId,
+      },
     });
 
     // Handle streaming response with streamText
     if (stream) {
       logger.debug(`Stream protocol: ${streamProtocol}`, { module: "proxy" });
 
-      // Convert messages to CoreMessage format for the AI SDK
-      const processedMessages = processMessages(messages, body.options);
+      // Process messages based on options
+      let processedMessages = processMessages(messages, body.options);
+
+      // Handle continuation if needed
+      if (isContinuation && continueMessageId && originalContent) {
+        processedMessages = handleContinuation(
+          processedMessages,
+          continueMessageId,
+          originalContent
+        );
+      }
 
       // Add detailed logging of processed messages
       logger.debug(`Processed messages (${processedMessages.length}):`, {

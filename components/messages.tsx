@@ -14,6 +14,7 @@ interface MessagesProps {
   ) => void;
   reload: (chatRequestOptions?: any) => Promise<string | null | undefined>;
   retryMessage?: (messageId: string) => Promise<string | null | undefined>;
+  continue?: (messageId: string) => Promise<string | null | undefined>;
   scrollToMessage?: (scrollFn: (messageId: string) => void) => void;
   getBranchInfo?: (parentMessageId: string) => {
     currentIndex: number;
@@ -30,6 +31,7 @@ function MessagesComponent({
   setMessages,
   reload,
   retryMessage,
+  continue: continueMessage,
   scrollToMessage,
   getBranchInfo,
   switchBranch,
@@ -81,6 +83,7 @@ function MessagesComponent({
           setMessages={setMessages}
           reload={reload}
           retryMessage={retryMessage}
+          continue={continueMessage}
           scrollToMessage={scrollToMessageFn}
           getBranchInfo={getBranchInfo}
           switchBranch={switchBranch}

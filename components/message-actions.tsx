@@ -94,6 +94,7 @@ export function PureMessageActions({
   setMessages,
   reload,
   retryMessage,
+  continue: continueMessage,
   scrollToMessage,
   getBranchInfo,
   switchBranch,
@@ -109,6 +110,7 @@ export function PureMessageActions({
     chatRequestOptions?: ExtendedRequestOptions
   ) => Promise<string | null | undefined>;
   retryMessage?: (messageId: string) => Promise<string | null | undefined>;
+  continue?: (messageId: string) => Promise<string | null | undefined>;
   scrollToMessage?: (messageId: string) => void;
   getBranchInfo?: (parentMessageId: string) => {
     currentIndex: number;
@@ -152,11 +154,18 @@ export function PureMessageActions({
     });
   }, [message.id, retryMessage, reload]);
 
-  const handleContinue = useCallback(() => {
-    // Handle the continue action
-    console.log(`Continuing from message ${message.id}`);
-    // You would implement the continuation logic here
-  }, [message.id]);
+  const handleContinue = useCallback(async () => {
+    if (continueMessage) {
+      try {
+        await continueMessage(message.id);
+      } catch (error) {
+        console.error("Error continuing message:", error);
+        // You could add toast notification here if desired
+      }
+    } else {
+      console.warn("Continue function not provided");
+    }
+  }, [message.id, continueMessage]);
 
   return (
     <div className="flex flex-row gap-1 items-center">

@@ -11,8 +11,6 @@ import {
   ensureExtendedMessage,
   ExtendedMessage,
 } from "@/lib/utils/messages";
-import { generateUUID } from "@/lib/utils";
-import logger from "@/lib/utils/logger";
 // Import error handling utilities
 import { handleError } from "@/lib/utils/error-handling";
 // Import relationship functions from the new module
@@ -21,7 +19,6 @@ import {
   establishRelationshipsForNewMessage,
 } from "@/lib/messages/relationships";
 // Import the new streamChatMessages function
-import { streamChatMessages } from "@/lib/chat/chatApi";
 // Import sanitization utilities
 import {
   sanitizeMessage,
@@ -52,6 +49,8 @@ import {
   HookDependencies,
   defaultDependencies,
 } from "@/lib/hooks/dependencies";
+import { continuePrompt } from "@/lib/ai/prompts";
+import { combineContent } from "@/lib/utils/chat";
 
 // Define our own ChatRequestOptions that includes what we need
 export type ChatRequestOptions = AIRequestOptions & {
@@ -188,6 +187,11 @@ export interface UseAIChatHelpers {
   reload: (
     chatRequestOptions?: ExtendedRequestOptions
   ) => Promise<string | null | undefined>;
+  /**
+   * Continue the specified assistant message from where it left off.
+   * The continued content will be streamed to the same message.
+   */
+  continue: (messageId: string) => Promise<string | null | undefined>;
   /**
    * Abort the current request immediately, keep the generated tokens if any.
    */
@@ -1127,11 +1131,341 @@ export function useAIChat({
     [reload, throttledMutateMessages, model]
   );
 
+  /**
+   * Continue the specified assistant message from where it left off.
+   * The continued content will be streamed to the same message.
+   */
+  const continueMessage = useCallback(
+    async (messageId: string) => {
+      const messageToContinue = messagesRef.current.find(
+        (msg) => msg.id === messageId && msg.role === "assistant"
+      );
+
+      if (!messageToContinue) {
+        console.error("[useAIChat] Could not find message to continue");
+        return null;
+      }
+
+      const parentMessageId = messageToContinue.parent_id;
+
+      if (!parentMessageId) {
+        console.error("[useAIChat] Could not find parent message");
+        return null;
+      }
+
+      const originalContent = messageToContinue.content;
+
+      const originalMessages = [...messagesRef.current];
+
+      mutateStatus("submitted");
+
+      const currentMessages = messagesRef.current;
+      const parentIndex = currentMessages.findIndex(
+        (msg) => msg.id === parentMessageId
+      );
+
+      if (parentIndex < 0) {
+        console.error(
+          "[useAIChat] Parent message not found in current messages"
+        );
+        return null;
+      }
+
+      const messagesUpToParent = currentMessages.slice(0, parentIndex + 1);
+
+      const systemMessage = {
+        id: deps.idGenerator.generate(),
+        role: "system" as const,
+        content: continuePrompt,
+        createdAt: new Date().toISOString(), // Add createdAt timestamp
+      };
+
+      const promptMessages = [...messagesUpToParent, systemMessage];
+
+      const validatedPromptMessages = promptMessages.map((msg) => {
+        const baseMessage = {
+          id: msg.id || deps.idGenerator.generate(),
+          role: msg.role,
+          content: msg.content || "",
+          createdAt: msg.createdAt || new Date().toISOString(),
+        };
+
+        const additionalProps: Record<string, any> = {};
+        Object.keys(msg).forEach((key) => {
+          if (
+            !["id", "role", "content", "createdAt"].includes(key) &&
+            msg[key as keyof typeof msg] !== undefined
+          ) {
+            additionalProps[key] = msg[key as keyof typeof msg];
+          }
+        });
+
+        return {
+          ...baseMessage,
+          ...additionalProps,
+        };
+      });
+
+      try {
+        throttledMutateMessages(() => {
+          return originalMessages.map((msg) => {
+            if (msg.id === messageId) {
+              return {
+                ...msg,
+                content: originalContent, // Don't add ellipsis, keep original content
+                isLoading: true,
+              };
+            }
+            return msg;
+          });
+        }, false);
+
+        const randomSeed = Math.floor(Math.random() * 1000000).toString();
+
+        const customOnUpdate = (update: {
+          message: ExtendedMessage;
+          replaceLastMessage: boolean;
+        }) => {
+          throttledMutateMessages(() => {
+            return originalMessages.map((msg) => {
+              if (msg.id === messageId) {
+                const continuationContent = update.message.content;
+
+                return {
+                  ...msg,
+                  content: combineContent(originalContent, continuationContent),
+                  isLoading: true,
+                };
+              }
+              return msg;
+            });
+          }, false);
+        };
+
+        console.log("[useAIChat] Continue request payload:", {
+          messageCount: validatedPromptMessages.length,
+          firstMessage: validatedPromptMessages[0],
+          lastMessage:
+            validatedPromptMessages[validatedPromptMessages.length - 1],
+        });
+
+        await deps.chatAPIClient.streamChatMessages({
+          messages: validatedPromptMessages as ExtendedMessage[],
+          id: chatId,
+          model: model || "unknown",
+          api,
+          streamProtocol,
+          headers: {
+            ...metaRef.current.headers,
+            "x-continue-message-id": messageId,
+            "x-random-seed": randomSeed,
+          },
+          body: {
+            ...metaRef.current.body,
+            continueMessageId: messageId,
+            originalContent,
+            seed: randomSeed,
+            // Add a flag to indicate this is a continuation, not a new message
+            isContinuation: true,
+          },
+          getAbortController: () => abortControllerRef.current!,
+          onResponse: async (response) => {
+            if (!response.ok) {
+              let errorDetails = "";
+              try {
+                const errorData = await response.json();
+                errorDetails = JSON.stringify(errorData, null, 2);
+              } catch (e) {
+                errorDetails = await response.text();
+              }
+
+              console.error(
+                `[useAIChat] API error during continue: ${response.status} ${response.statusText}`,
+                errorDetails
+              );
+
+              throttledMutateMessages(() => {
+                return originalMessages.map((msg) => {
+                  if (msg.id === messageId) {
+                    return {
+                      ...msg,
+                      content: combineContent(
+                        originalContent,
+                        " [Error: Could not continue message]"
+                      ),
+                      isLoading: false,
+                    };
+                  }
+                  return msg;
+                });
+              }, false);
+
+              // Set error state
+              setError(
+                new Error(
+                  `API error: ${response.status} ${response.statusText}`
+                )
+              );
+              mutateStatus("error");
+
+              // Call original onResponse if provided
+              if (onResponse) {
+                onResponse(response);
+              }
+
+              // Throw error to skip the rest of the process
+              throw new Error(
+                `API error: ${response.status} ${response.statusText}`
+              );
+            }
+
+            // Call original onResponse if provided
+            if (onResponse) {
+              onResponse(response);
+            }
+          },
+          // Don't use the standard update handler, use our custom one
+          onUpdate: customOnUpdate,
+          onStreamPart,
+          onFinish: async (message, finishReason) => {
+            // Final update to remove loading indicator while preserving all messages
+            throttledMutateMessages(() => {
+              // Use the original messages as a base and update only the continued message
+              return originalMessages.map((msg) => {
+                if (msg.id === messageId) {
+                  const updatedMsg = messagesRef.current.find(
+                    (m) => m.id === messageId
+                  );
+
+                  const continuationContent = updatedMsg
+                    ? updatedMsg.content.substring(originalContent.length)
+                    : "";
+
+                  return {
+                    ...msg,
+                    content: updatedMsg
+                      ? combineContent(originalContent, continuationContent)
+                      : msg.content,
+                    isLoading: false,
+                  };
+                }
+                return msg;
+              });
+            }, false);
+
+            // Set status to ready
+            mutateStatus("ready");
+
+            // Call the original onFinish if provided
+            if (onFinish) {
+              // Find the updated message to pass to onFinish
+              const updatedMessage = messagesRef.current.find(
+                (msg) => msg.id === messageId
+              );
+              if (updatedMessage) {
+                onFinish(updatedMessage, finishReason);
+              }
+            }
+
+            // Final check to ensure we haven't lost any messages
+            setTimeout(() => {
+              if (messagesRef.current.length < originalMessages.length) {
+                console.warn(
+                  "[useAIChat] Message count decreased after continuation, restoring original messages"
+                );
+                throttledMutateMessages(() => {
+                  // Use the original messages as a base and update only the continued message
+                  return originalMessages.map((msg) => {
+                    if (msg.id === messageId) {
+                      // Find the current version of this message to get the updated content
+                      const updatedMsg = messagesRef.current.find(
+                        (m) => m.id === messageId
+                      );
+
+                      // Get the continuation content
+                      const continuationContent = updatedMsg
+                        ? updatedMsg.content.substring(originalContent.length)
+                        : "";
+
+                      return {
+                        ...msg,
+                        // Use the combineContent function to ensure seamless continuation
+                        content: updatedMsg
+                          ? combineContent(originalContent, continuationContent)
+                          : msg.content,
+                        isLoading: false,
+                      };
+                    }
+                    return msg;
+                  });
+                }, false);
+              }
+            }, 500); // Small delay to ensure this runs after any other updates
+          },
+        });
+
+        return messageId;
+      } catch (err) {
+        const error = err as Error;
+        console.error("[useAIChat] continue error:", error);
+
+        // Make sure we reset the UI state
+        throttledMutateMessages(() => {
+          // Restore all original messages but update the continued message with error
+          return originalMessages.map((msg) => {
+            if (msg.id === messageId) {
+              return {
+                ...msg,
+                content: combineContent(
+                  originalContent,
+                  " [Error: " +
+                    (error.message || "Could not continue response") +
+                    "]"
+                ),
+                isLoading: false,
+              };
+            }
+            return msg;
+          });
+        }, false);
+
+        setError(error);
+        mutateStatus("error");
+
+        if (onError) {
+          onError(error);
+        }
+
+        return null;
+      }
+    },
+    [
+      model,
+      api,
+      streamProtocol,
+      chatId,
+      messagesRef,
+      throttledMutateMessages,
+      setError,
+      mutateStatus,
+      onResponse,
+      onStreamPart,
+      onFinish,
+      onError,
+      deps.idGenerator,
+      deps.chatAPIClient,
+      handleUpdate,
+      metaRef,
+      abortControllerRef,
+    ]
+  );
+
   return {
     messages,
     error,
     append,
     reload,
+    continue: continueMessage,
     stop,
     setMessages,
     input,

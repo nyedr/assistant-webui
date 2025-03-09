@@ -16,7 +16,7 @@ import { Messages } from "./messages";
 import { useBlockSelector } from "@/hooks/use-block";
 import { generateUUID, saveChatMessages, ExtendedMessage } from "@/lib/utils";
 import { toast } from "sonner";
-import { useChatContext } from "@/lib/context/chat-context";
+import { useChatContext } from "@/lib/chat/chat-context";
 
 interface ChatProps {
   id: string;
@@ -55,6 +55,7 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
     switchBranch,
     getBranchInfo,
     retryMessage,
+    continue: continueMessage,
   } = useAIChat({
     id: chatId,
     initialMessages,
@@ -258,6 +259,7 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
               setMessages={setMessages}
               reload={reload}
               retryMessage={retryMessage}
+              continue={continueMessage}
               scrollToMessage={(scrollFn) => {
                 scrollToMessageRef.current = scrollFn;
               }}

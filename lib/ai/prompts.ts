@@ -1,4 +1,17 @@
-import { BlockKind } from '@/components/block';
+import { BlockKind } from "@/components/block";
+
+export const continuePrompt = `
+Continue the assistant's previous response seamlessly, as if you were still in the middle of the same thought. 
+
+Important instructions:
+1. Do NOT use any transition phrases like "Additionally," "Furthermore," "Moreover," etc.
+2. Do NOT repeat any content that was already generated.
+3. Do NOT acknowledge that you're continuing - just pick up exactly where the text left off.
+4. Maintain the same tone, style, and context as the original response.
+5. The user should not be able to tell there was a break in the generation.
+
+Your continuation should flow naturally from the last word of the previous response.
+`;
 
 export const blocksPrompt = `
 Blocks is a special user interface mode that helps users with writing, editing, and other content creation tasks. When block is open, it is on the right side of the screen, while the conversation is on the left side. When creating or updating documents, changes are reflected in real-time on the blocks and visible to the user.
@@ -32,7 +45,7 @@ Do not update document right after creating it. Wait for user feedback or reques
 `;
 
 export const regularPrompt =
-  'You are a friendly assistant! Keep your responses concise and helpful.';
+  "You are a friendly assistant! Keep your responses concise and helpful.";
 
 export const systemPrompt = `${regularPrompt}\n\n${blocksPrompt}`;
 
@@ -66,18 +79,18 @@ print(f"Factorial of 5 is: {factorial(5)}")
 
 export const updateDocumentPrompt = (
   currentContent: string | null,
-  type: BlockKind,
+  type: BlockKind
 ) =>
-  type === 'text'
+  type === "text"
     ? `\
 Improve the following contents of the document based on the given prompt.
 
 ${currentContent}
 `
-    : type === 'code'
-      ? `\
+    : type === "code"
+    ? `\
 Improve the following code snippet based on the given prompt.
 
 ${currentContent}
 `
-      : '';
+    : "";

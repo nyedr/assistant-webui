@@ -7,7 +7,7 @@ import { memo, useEffect, useState } from "react";
 import { toast } from "sonner";
 import useSWR from "swr";
 import { cn } from "@/lib/utils";
-import { useChatContext } from "@/lib/context/chat-context";
+import { useChatContext } from "@/lib/chat/chat-context";
 
 import {
   FolderIcon,

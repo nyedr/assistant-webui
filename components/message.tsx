@@ -26,6 +26,7 @@ interface PreviewMessageProps {
     chatRequestOptions?: ExtendedRequestOptions
   ) => Promise<string | null | undefined>;
   retryMessage?: (messageId: string) => Promise<string | null | undefined>;
+  continue?: (messageId: string) => Promise<string | null | undefined>;
   scrollToMessage?: (messageId: string) => void;
   getBranchInfo?: (parentMessageId: string) => {
     currentIndex: number;
@@ -41,6 +42,7 @@ const PurePreviewMessage = ({
   setMessages,
   reload,
   retryMessage,
+  continue: continueMessage,
   scrollToMessage,
   getBranchInfo,
   switchBranch,
@@ -156,6 +158,7 @@ const PurePreviewMessage = ({
                 return reload();
               }}
               retryMessage={retryMessage}
+              continue={continueMessage}
               scrollToMessage={scrollToMessage}
             />
           </div>
