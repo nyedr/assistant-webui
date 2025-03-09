@@ -6,6 +6,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { ChatProvider } from "@/lib/context/chat-context";
 
 import "./globals.css";
+import { ReactScan } from "@/components/scan";
 
 export const metadata: Metadata = {
   title: "Next.js Chatbot Template",
@@ -57,6 +58,8 @@ export default async function RootLayout({
           }}
         />
       </head>
+      <ReactScan />
+
       <body className="antialiased">
         <CookiesProvider>
           <ThemeProvider
