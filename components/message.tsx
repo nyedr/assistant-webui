@@ -1,38 +1,37 @@
 "use client";
 
-import type { Message } from "ai";
 import { AnimatePresence, motion } from "framer-motion";
-import { memo, useState, useEffect, useRef } from "react";
+import { memo, useState, useEffect, useRef, useMemo } from "react";
 
 import { PencilEditIcon } from "./icons";
 import ChatMarkdown from "./markdown";
 import { MessageActions } from "./message-actions";
 import { PreviewAttachment } from "./preview-attachment";
-import { cn, ensureExtendedMessage } from "@/lib/utils";
+import { cn, ExtendedMessage } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { MessageEditor } from "./message-editor";
 import AnimatedGradientText from "./ui/gradient-text";
 import { ExtendedRequestOptions } from "@/hooks/use-ai-chat";
+import { BranchInfo } from "@/lib/messages/branching";
 
 interface PreviewMessageProps {
   chatId: string;
-  message: Message;
+  message: ExtendedMessage;
   isLoading: boolean;
   setMessages: (
-    messages: Message[] | ((messages: Message[]) => Message[])
+    messages:
+      | ExtendedMessage[]
+      | ((messages: ExtendedMessage[]) => ExtendedMessage[])
   ) => void;
   reload: (
     chatRequestOptions?: ExtendedRequestOptions
   ) => Promise<string | null | undefined>;
-  retryMessage?: (messageId: string) => Promise<string | null | undefined>;
-  continue?: (messageId: string) => Promise<string | null | undefined>;
+  retryMessage: (messageId: string) => Promise<string | null | undefined>;
+  continue: (messageId: string) => Promise<string | null | undefined>;
   scrollToMessage?: (messageId: string) => void;
-  getBranchInfo?: (parentMessageId: string) => {
-    currentIndex: number;
-    totalBranches: number;
-  };
-  switchBranch?: (parentMessageId: string, branchIndex: number) => void;
+  getBranchInfo: (parentMessageId: string) => BranchInfo;
+  switchBranch: (parentMessageId: string, branchIndex: number) => void;
 }
 
 const PurePreviewMessage = ({
@@ -60,6 +59,10 @@ const PurePreviewMessage = ({
       clearTimeout(timeout);
     };
   }, []);
+
+  const branchInfo = useMemo(() => {
+    return message.parent_id ? getBranchInfo(message.parent_id) : undefined;
+  }, [message.parent_id, getBranchInfo]);
 
   return (
     <AnimatePresence>
@@ -111,7 +114,10 @@ const PurePreviewMessage = ({
                 )}
 
                 {isUserMessage ? (
-                  <div className="user-message" data-message-role="user">
+                  <div
+                    className="rounded-3xl px-5 py-2.5 bg-muted text-primary-foreground"
+                    data-message-role="user"
+                  >
                     <ChatMarkdown
                       content={message.content}
                       isUserMessage={isUserMessage}
@@ -143,23 +149,15 @@ const PurePreviewMessage = ({
             )}
 
             <MessageActions
-              key={`action-${message.id}`}
               chatId={chatId}
-              message={ensureExtendedMessage(message)}
+              message={message}
               isLoading={isLoading}
               setMessages={setMessages}
-              getBranchInfo={getBranchInfo}
-              switchBranch={switchBranch}
-              reload={(options?: ExtendedRequestOptions) => {
-                if (options) {
-                  const { options: _, ...standardOptions } = options;
-                  return reload(standardOptions);
-                }
-                return reload();
-              }}
               retryMessage={retryMessage}
               continue={continueMessage}
               scrollToMessage={scrollToMessage}
+              branchInfo={branchInfo}
+              switchBranch={switchBranch}
             />
           </div>
         </div>

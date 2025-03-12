@@ -162,62 +162,24 @@ export async function updateChatHistory({
       content: msg.content,
     }));
 
-    const sanitizedHistory = {
-      currentId: history.currentId,
-      messages: sanitizedMessages,
-    };
-
     console.log(
       `[ACTION] Processed ${sanitizedMessages.length} messages for saving, currentId: ${history.currentId}`
     );
 
     // Check if the DB has the chat
     const db = await getDb();
-    const existingChat = db.select().from(chat).where(eq(chat.id, id)).get();
-
-    if (!existingChat) {
-      // Log detailed error information
-      console.error(
-        `[ACTION] Chat ${id} not found in database when trying to update history`
-      );
-      console.error(
-        `[ACTION] Current message count: ${sanitizedMessages.length}`
-      );
-
-      if (sanitizedMessages.length > 0) {
-        console.error(
-          `[ACTION] First message: ${sanitizedMessages[0].role}/${sanitizedMessages[0].id}`
-        );
-        console.error(
-          `[ACTION] Last message: ${
-            sanitizedMessages[sanitizedMessages.length - 1].role
-          }/${sanitizedMessages[sanitizedMessages.length - 1].id}`
-        );
-      }
-
-      // Simple error, no auto-creation
-      throw new Error(`Chat not found (ID: ${id})`);
-    }
-
-    // Serialize the chat data
-    const chatJson = parseChatToDB(sanitizedHistory);
-
-    // Log a preview of what we're about to save
-    console.log(
-      `[ACTION] Saving chat with ${sanitizedMessages.length} messages (JSON length: ${chatJson.length})`
-    );
-
     const result = db
       .update(chat)
       .set({
-        chat: chatJson,
+        chat: parseChatToDB(history),
         updated_at: new Date().toISOString(),
       })
       .where(eq(chat.id, id))
       .run();
 
     if (!result?.changes) {
-      throw new Error("Failed to update chat history");
+      console.error("[Chat History] No rows were updated for chat:", id);
+      throw new Error("Failed to update chat history: No rows affected");
     }
 
     // Verify the update
@@ -235,7 +197,23 @@ export async function updateChatHistory({
 
     return { success: true };
   } catch (error) {
-    console.error("Failed to update chat history:", error);
+    console.error("[Chat History] Failed to update chat history:", {
+      chatId: id,
+      error:
+        error instanceof Error
+          ? {
+              name: error.name,
+              message: error.message,
+              stack: error.stack,
+            }
+          : error,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Re-throw with additional context
+    if (error instanceof Error) {
+      throw new Error(`Failed to update chat history: ${error.message}`);
+    }
     throw error;
   }
 }
@@ -408,6 +386,16 @@ export async function updateChatMessages(id: string, messages: Message[]) {
       `[ACTION] Updating chat ${id} with ${messages.length} messages`
     );
 
+    // DEBUG: Log user messages parent IDs
+    const userMessages = messages.filter((msg) => msg.role === "user");
+    console.log(
+      "[DEBUG] User messages being saved:",
+      userMessages.map((msg) => ({
+        id: msg.id,
+        parent_id: (msg as any).parent_id || null,
+      }))
+    );
+
     const db = await getDb();
     const existingChat = db.select().from(chat).where(eq(chat.id, id)).get();
 
@@ -420,6 +408,18 @@ export async function updateChatMessages(id: string, messages: Message[]) {
       ...msg,
       content: msg.content,
     }));
+
+    // DEBUG: Check if parent IDs are preserved in sanitized messages
+    const sanitizedUserMessages = sanitizedMessages.filter(
+      (msg) => msg.role === "user"
+    );
+    console.log(
+      "[DEBUG] Sanitized user messages:",
+      sanitizedUserMessages.map((msg) => ({
+        id: msg.id,
+        parent_id: (msg as any).parent_id || null,
+      }))
+    );
 
     const updateResult = db
       .update(chat)

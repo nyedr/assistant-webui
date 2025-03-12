@@ -15,14 +15,13 @@ import {
   useState,
 } from "react";
 import { useOnClickOutside } from "usehooks-ts";
-import { nanoid } from "nanoid";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { cn, sanitizeUIMessages } from "@/lib/utils";
+import { cn, generateUUID, sanitizeUIMessages } from "@/lib/utils";
 
 import {
   ArrowUpIcon,
@@ -171,7 +170,7 @@ const Tool = ({
   );
 };
 
-const randomArr = [...Array(6)].map((x) => nanoid(5));
+const randomArr = [...Array(6)].map((x) => generateUUID());
 
 const ReadingLevelSelector = ({
   setSelectedTool,

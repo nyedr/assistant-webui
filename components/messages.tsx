@@ -2,10 +2,11 @@ import { PreviewMessage, ThinkingMessage } from "./message";
 import { useScrollToBottom } from "./use-scroll-to-bottom";
 import { memo, useRef, useEffect } from "react";
 import { Message } from "ai";
-import { cn } from "@/lib/utils";
+import { cn, ExtendedMessage } from "@/lib/utils";
+import { BranchInfo } from "@/lib/messages/branching";
 
 interface MessagesProps {
-  messages: Message[];
+  messages: ExtendedMessage[];
   isLoading: boolean;
   isBlockVisible: boolean;
   chatId: string;
@@ -13,14 +14,12 @@ interface MessagesProps {
     messages: Message[] | ((messages: Message[]) => Message[])
   ) => void;
   reload: (chatRequestOptions?: any) => Promise<string | null | undefined>;
-  retryMessage?: (messageId: string) => Promise<string | null | undefined>;
-  continue?: (messageId: string) => Promise<string | null | undefined>;
+  retryMessage: (messageId: string) => Promise<string | null | undefined>;
+  continue: (messageId: string) => Promise<string | null | undefined>;
   scrollToMessage?: (scrollFn: (messageId: string) => void) => void;
-  getBranchInfo?: (parentMessageId: string) => {
-    currentIndex: number;
-    totalBranches: number;
-  };
-  switchBranch?: (parentMessageId: string, branchIndex: number) => void;
+  switchBranch: (parentMessageId: string, branchIndex: number) => void;
+  getBranchInfo: (parentMessageId: string) => BranchInfo;
+  currentId: string;
 }
 
 function MessagesComponent({
@@ -33,8 +32,9 @@ function MessagesComponent({
   retryMessage,
   continue: continueMessage,
   scrollToMessage,
-  getBranchInfo,
   switchBranch,
+  getBranchInfo,
+  currentId,
 }: MessagesProps) {
   // Track the previous message count to determine if new messages were added
   const prevMessageCountRef = useRef(messages.length);
@@ -66,6 +66,12 @@ function MessagesComponent({
     }
   }, [messages.length, isBlockVisible]);
 
+  useEffect(() => {
+    if (currentId) {
+      scrollToMessageFn?.(currentId);
+    }
+  }, [currentId, scrollToMessageFn]);
+
   return (
     <div
       ref={containerRef}
@@ -85,8 +91,8 @@ function MessagesComponent({
           retryMessage={retryMessage}
           continue={continueMessage}
           scrollToMessage={scrollToMessageFn}
-          getBranchInfo={getBranchInfo}
           switchBranch={switchBranch}
+          getBranchInfo={getBranchInfo}
         />
       ))}
       {isLoading && <ThinkingMessage />}
@@ -98,14 +104,17 @@ function MessagesComponent({
 export const Messages = memo(MessagesComponent, (prevProps, nextProps) => {
   if (prevProps.isLoading !== nextProps.isLoading) return false;
   if (prevProps.isBlockVisible !== nextProps.isBlockVisible) return false;
-  if (prevProps.messages.length !== nextProps.messages.length) return false;
+  if (prevProps.currentId !== nextProps.currentId) return false;
 
-  // Check if any message content has changed
-  const hasContentChanged = prevProps.messages.some((prevMsg, index) => {
-    if (index >= nextProps.messages.length) return true;
-    const nextMsg = nextProps.messages[index];
-    return prevMsg.content !== nextMsg.content;
-  });
+  if (prevProps.messages !== nextProps.messages) {
+    const hasContentChanged = prevProps.messages.some((prevMsg, index) => {
+      if (index >= nextProps.messages.length) return true;
+      const nextMsg = nextProps.messages[index];
+      return prevMsg.content !== nextMsg.content;
+    });
 
-  return !hasContentChanged;
+    if (hasContentChanged) return false;
+  }
+
+  return true;
 });

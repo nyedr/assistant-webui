@@ -94,6 +94,19 @@ export function parseChatToDB(history: {
   messages: Message[];
 }): string {
   try {
+    // DEBUG: Check user message parent IDs before serialization
+    const userMessages = history.messages.filter((msg) => msg.role === "user");
+    if (userMessages.length > 0) {
+      console.log(
+        "[DEBUG] User messages before DB serialization:",
+        userMessages.map((msg) => ({
+          id: msg.id,
+          role: msg.role,
+          parent_id: (msg as any).parent_id || null,
+        }))
+      );
+    }
+
     // Final sanitize before saving
     const sanitized = {
       currentId: history.currentId,
@@ -102,6 +115,22 @@ export function parseChatToDB(history: {
         content: msg.content || "",
       })),
     };
+
+    // Check if parent_id is preserved in sanitized messages
+    const sanitizedUserMessages = sanitized.messages.filter(
+      (msg) => msg.role === "user"
+    );
+    if (sanitizedUserMessages.length > 0) {
+      console.log(
+        "[DEBUG] User messages after sanitization for DB:",
+        sanitizedUserMessages.map((msg) => ({
+          id: msg.id,
+          role: msg.role,
+          parent_id: (msg as any).parent_id || null,
+        }))
+      );
+    }
+
     return JSON.stringify(sanitized);
   } catch (error) {
     return JSON.stringify({

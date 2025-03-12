@@ -1,8 +1,8 @@
 import { cookies } from "next/headers";
-import { generateUUID } from "@/lib/utils";
 import { Chat } from "@/components/chat";
 import { DEFAULT_MODEL_NAME } from "@/lib/ai/models";
 import { DataStreamHandler } from "@/components/data-stream-handler";
+import { generateUUID } from "@/lib/utils";
 
 export default async function Page() {
   const cookieStore = await cookies();
@@ -11,6 +11,7 @@ export default async function Page() {
   // Use default model if no cookie value
   const selectedModelId = modelIdFromCookie || DEFAULT_MODEL_NAME;
 
+  // No longer generate UUID - chat will be created when first message is sent
   const id = generateUUID();
 
   console.log("Page rendered with NEW chat id:", id);

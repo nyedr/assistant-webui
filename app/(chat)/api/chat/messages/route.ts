@@ -1,13 +1,13 @@
 import { z } from "zod";
-import { getChatById, updateChatMessages } from "@/app/(chat)/actions";
+import { getChatById, updateChatHistory } from "@/app/(chat)/actions";
 import { Message } from "ai";
 import {
   ExtendedMessage,
   mergeMessages,
-  establishMessageRelationships,
   removeDuplicateUserMessages,
   ValidatedMessage,
 } from "@/lib/utils/messages";
+import { establishMessageRelationships } from "@/lib/messages/relationships";
 
 // Schema for input validation
 const messagesPayloadSchema = z.object({
@@ -22,6 +22,7 @@ const messagesPayloadSchema = z.object({
       model: z.string().optional(),
     })
   ),
+  currentId: z.string().nullable().optional(),
 });
 
 /**
@@ -79,6 +80,7 @@ export const POST = async (request: Request) => {
     }
 
     const newMessages = validationResult.data.messages as ExtendedMessage[];
+    const currentId = validationResult.data.currentId;
 
     // 3. Retrieve existing messages
     const existingChat = await getChatById({ id: chatId });
@@ -96,7 +98,17 @@ export const POST = async (request: Request) => {
     const finalMessages = establishMessageRelationships(deduplicatedMessages);
 
     // 7. Update the database
-    await updateChatMessages(chatId, finalMessages as unknown as Message[]);
+    await updateChatHistory({
+      id: chatId,
+      history: {
+        currentId:
+          currentId ||
+          (finalMessages.length > 0
+            ? finalMessages[finalMessages.length - 1].id
+            : null),
+        messages: finalMessages as unknown as Message[],
+      },
+    });
 
     // 8. Return the updated chat
     const updatedChat = await getChatById({ id: chatId });

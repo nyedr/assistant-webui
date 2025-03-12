@@ -5,6 +5,7 @@ import { Chat } from "@/components/chat";
 import { DEFAULT_MODEL_NAME } from "@/lib/ai/models";
 import { getChatById } from "@/app/(chat)/actions";
 import { parseChatFromDB } from "@/lib/utils";
+import { DataStreamHandler } from "@/components/data-stream-handler";
 
 export default async function Page(props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
@@ -36,10 +37,13 @@ export default async function Page(props: { params: Promise<{ id: string }> }) {
   const selectedModelId = modelIdFromCookie || DEFAULT_MODEL_NAME;
 
   return (
-    <Chat
-      id={chatResult.data.id}
-      initialMessages={messages}
-      selectedModelId={selectedModelId}
-    />
+    <>
+      <Chat
+        id={chatResult.data.id}
+        initialMessages={messages}
+        selectedModelId={selectedModelId}
+      />
+      <DataStreamHandler id={chatResult.data.id} />
+    </>
   );
 }

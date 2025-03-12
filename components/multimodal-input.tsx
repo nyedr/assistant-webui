@@ -12,23 +12,19 @@ import {
   memo,
 } from "react";
 import { toast } from "sonner";
-import { useLocalStorage, useWindowSize } from "usehooks-ts";
+import { useWindowSize } from "usehooks-ts";
 
-import { cn, generateUUID, sanitizeUIMessages } from "@/lib/utils";
+import { cn, sanitizeUIMessages, truncateString } from "@/lib/utils";
 
-import {
-  createNewChat,
-  generateTitleFromUserMessage,
-  updateChatMessages,
-} from "@/app/(chat)/actions";
+import { createNewChat } from "@/app/(chat)/actions";
 
 import { ArrowUpIcon, PaperclipIcon, StopIcon } from "./icons";
 import { PreviewAttachment } from "./preview-attachment";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import equal from "fast-deep-equal";
-import { Message, CreateMessage, Attachment } from "ai";
-import { ChatRequestOptions } from "@/hooks/use-ai-chat";
+import { Message, Attachment } from "ai";
+import { ExtendedRequestOptions } from "@/hooks/use-ai-chat";
 
 function PureMultimodalInput({
   chatId,
@@ -40,7 +36,6 @@ function PureMultimodalInput({
   setAttachments,
   messages,
   setMessages,
-  append,
   handleSubmit,
   className,
 }: {
@@ -55,13 +50,9 @@ function PureMultimodalInput({
   setMessages: (
     messages: Message[] | ((messages: Message[]) => Message[])
   ) => void;
-  append: (
-    message: Message | CreateMessage,
-    chatRequestOptions?: ChatRequestOptions
-  ) => Promise<string | null | undefined>;
   handleSubmit: (
     event?: React.FormEvent<HTMLFormElement>,
-    chatRequestOptions?: ChatRequestOptions
+    chatRequestOptions?: ExtendedRequestOptions
   ) => Promise<void>;
   className?: string;
 }) {
@@ -115,25 +106,15 @@ function PureMultimodalInput({
     }
   }, [width]);
 
-  const [localStorageInput, setLocalStorageInput] = useLocalStorage(
-    "input",
-    ""
-  );
-
   useEffect(() => {
     if (textareaRef.current) {
       const domValue = textareaRef.current.value;
       // Prefer DOM value over localStorage to handle hydration
-      const finalValue = domValue || localStorageInput || "";
+      const finalValue = domValue || "";
       setInput(finalValue);
       adjustHeight();
     }
-    // Only run once after hydration
   }, []);
-
-  useEffect(() => {
-    setLocalStorageInput(input);
-  }, [input, setLocalStorageInput]);
 
   const handleInput = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     // Preserve the current cursor position before adjusting
@@ -143,7 +124,6 @@ function PureMultimodalInput({
     const newValue = event.target.value;
     setInput(newValue);
     // Ensure local storage is updated in sync with input state
-    setLocalStorageInput(newValue);
     adjustHeight();
 
     // After React updates the component and adjusts height,
@@ -160,127 +140,36 @@ function PureMultimodalInput({
     try {
       // IMPORTANT: Always use the parent's chat ID instead of creating a new one
       const currentChatId = chatId;
+      const userContent = input;
+      const currentAttachments = [...attachments];
 
       console.log(
         `submitForm using chatId: ${currentChatId} (existing messages: ${messages.length})`
       );
 
-      // Create the new user message
-      const newUserMessage: Message = {
-        content: input,
-        role: "user",
-        id: generateUUID(),
-        createdAt: new Date(),
-        reasoning: "",
-        experimental_attachments: attachments,
-        data: {},
-        annotations: [],
-        toolInvocations: [],
-      };
+      // DEBUG: Log the input before clearing
+      console.log("[DEBUG] User input before clearing:", userContent);
 
-      // Store the current input and attachments
-      const currentAttachments = [...attachments];
-
-      // Clear input and reset UI immediately for better user experience
       setInput("");
-      setLocalStorageInput("");
       setAttachments([]);
       resetHeight();
-
-      console.log(`Created new user message with ID: ${newUserMessage.id}`);
-
-      // IMPORTANT: Cache the message in sessionStorage to prevent loss in race conditions
-      try {
-        const tempKey = `temp_messages_${currentChatId}`;
-        let cachedMessages = [];
-        const existingCache = sessionStorage.getItem(tempKey);
-
-        if (existingCache) {
-          cachedMessages = JSON.parse(existingCache);
-        }
-
-        if (!Array.isArray(cachedMessages)) {
-          cachedMessages = [];
-        }
-
-        cachedMessages.push(newUserMessage);
-        sessionStorage.setItem(tempKey, JSON.stringify(cachedMessages));
-        console.log(
-          `Cached user message ID ${newUserMessage.id} in sessionStorage`
-        );
-      } catch (e) {
-        console.error("Error caching message in sessionStorage:", e);
-      }
 
       // Only create new chat in the database if this is the first message
       // but use the same ID that was generated in the parent component
       if (messages.length === 0) {
-        console.log(
-          `First message - Creating/initializing chat record for ID: ${currentChatId}`
-        );
-        const title =
-          (await generateTitleFromUserMessage({
-            message: newUserMessage,
-          })) ?? "New Chat";
+        const chatTitle = truncateString(userContent, 20);
 
-        // Check if this chat already exists in the database
-        try {
-          // First, try to save the initial user message
-          await updateChatMessages(currentChatId, [newUserMessage]);
-          console.log(
-            `Successfully saved first user message to chat ${currentChatId}`
-          );
-        } catch (error) {
-          // If updating fails, the chat might not exist yet, so create it
-          console.log(`Chat ${currentChatId} doesn't exist yet, creating it`);
-          const result = await createNewChat(title, currentChatId);
-          if (!result.success) {
-            throw new Error("Failed to create chat");
-          }
+        console.log(`Chat ${currentChatId} doesn't exist yet, creating it`);
+        const result = await createNewChat(chatTitle, currentChatId);
 
-          // Ensure we're using the ID from the parent
-          if (result.id !== currentChatId) {
-            console.warn(
-              `Warning: Created chat ID ${result.id} differs from parent ID ${currentChatId}`
-            );
-          }
-
-          // Add the user message
-          await updateChatMessages(currentChatId, [newUserMessage]);
-          console.log(
-            `Successfully saved first user message after creating chat ${currentChatId}`
-          );
+        if (!result.success) {
+          throw new Error("Failed to create chat");
         }
-      } else {
-        // For non-first messages, we need to be careful to include all existing messages plus the new one
-        console.log(
-          `Adding message to existing chat with ${messages.length} messages`
-        );
 
-        // Get all existing messages and add the new user message
-        const updatedMessages = [...messages, newUserMessage];
-
-        // Log the message sequence to help debug
-        console.log(
-          `Message sequence before saving: ${updatedMessages
-            .map((m) => m.role)
-            .join(", ")}`
-        );
-
-        // Save all messages including the new user message
-        try {
-          await updateChatMessages(currentChatId, updatedMessages);
-          console.log(
-            `Successfully saved ${updatedMessages.length} messages to chat ${currentChatId}`
-          );
-        } catch (error) {
-          console.error("Error saving user message:", error);
-          if (error instanceof Error) {
-            console.error(`Error details: ${error.message}`);
-          }
-          // We'll continue anyway and let the AI response flow proceed
-          console.log(
-            "Continuing despite save error - message will be added to UI state"
+        // Ensure we're using the ID from the parent
+        if (result.id !== currentChatId) {
+          console.warn(
+            `Warning: Created chat ID ${result.id} differs from parent ID ${currentChatId}`
           );
         }
       }
@@ -288,7 +177,8 @@ function PureMultimodalInput({
       // Set the URL to the current chat ID
       window.history.replaceState({}, "", `/chat/${currentChatId}`);
 
-      // Finally, submit the message to get the AI response
+      // Let handleSubmit create the user message with proper parent relationships
+      // and handle the AI response
       console.log(`Invoking AI with ${currentAttachments.length} attachments`);
       await handleSubmit(undefined, {
         experimental_attachments: currentAttachments,
@@ -305,30 +195,15 @@ function PureMultimodalInput({
           console.error(
             `Chat ID ${chatId} not found in database. This indicates a potential ID mismatch.`
           );
-
-          // Try to investigate by checking sessionStorage for debug info
-          try {
-            const debugInfo = sessionStorage.getItem(`chatDebug_${chatId}`);
-            if (debugInfo) {
-              console.error(
-                `Previous debug info for chat ${chatId}:`,
-                JSON.parse(debugInfo)
-              );
-            } else {
-              console.error(`No debug info found for chat ${chatId}`);
-            }
-          } catch (e) {
-            console.error("Error retrieving debug info:", e);
-          }
         }
       }
+
       toast.error("Failed to send message. Please try again.");
     }
   }, [
     attachments,
     handleSubmit,
     setAttachments,
-    setLocalStorageInput,
     width,
     chatId,
     messages,
@@ -491,7 +366,7 @@ function PureMultimodalInput({
                         tabIndex={-1}
                       />
                       <Button
-                        className="h-9 rounded-full w-9 bg-muted hover:bg-accent"
+                        className="h-9 border-[#b5b5b5] rounded-full w-9 bg-muted hover:bg-accent"
                         onClick={(event) => {
                           event.preventDefault();
                           fileInputRef.current?.click();
@@ -499,7 +374,7 @@ function PureMultimodalInput({
                         disabled={isLoading}
                         variant="outline"
                       >
-                        <PaperclipIcon size={18} />
+                        <PaperclipIcon size={18} className="text-[#b5b5b5]" />
                       </Button>
                     </div>
 

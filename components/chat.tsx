@@ -3,18 +3,14 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useSWRConfig } from "swr";
 import type { Message, Attachment } from "ai";
-import {
-  useAIChat,
-  type ChatRequestOptions,
-  type ExtendedRequestOptions,
-} from "@/hooks/use-ai-chat";
+import { useAIChat, type ExtendedRequestOptions } from "@/hooks/use-ai-chat";
 
 import { ChatHeader } from "@/components/chat-header";
 import { Block } from "./block";
 import { MultimodalInput } from "./multimodal-input";
 import { Messages } from "./messages";
 import { useBlockSelector } from "@/hooks/use-block";
-import { generateUUID, saveChatMessages, ExtendedMessage } from "@/lib/utils";
+import { saveChatMessages } from "@/lib/utils";
 import { toast } from "sonner";
 import { useChatContext } from "@/lib/chat/chat-context";
 
@@ -43,6 +39,7 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
 
   const {
     messages,
+    activeMessages,
     setMessages,
     handleSubmit,
     input,
@@ -53,9 +50,10 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
     reload,
     error,
     switchBranch,
-    getBranchInfo,
     retryMessage,
     continue: continueMessage,
+    currentId,
+    getBranchInfo,
   } = useAIChat({
     id: chatId,
     initialMessages,
@@ -76,6 +74,30 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
     sendExtraMessageFields: true,
     experimental_throttle: 50,
     streamProtocol: "text",
+    onUserMessageProcessed: async (processedMessage, currentMessages) => {
+      try {
+        // Save the messages to the database with proper parent-child relationships
+        console.log(
+          "[DEBUG] Saving processed user message with parent_id:",
+          processedMessage.parent_id
+        );
+
+        const res = await saveChatMessages(chatId, currentMessages, currentId);
+        if (!res.ok) {
+          throw new Error(
+            `Failed to save chat messages: ${res.status} ${res.statusText}`
+          );
+        }
+
+        console.log(
+          `Successfully saved ${currentMessages.length} messages to database with proper parent_id`
+        );
+        notifyChatUpdated(chatId);
+      } catch (error) {
+        console.error("Error saving user message:", error);
+        // Don't show a toast here as it might confuse the user since the UI is updated
+      }
+    },
     onResponse: async (response) => {
       if (!response.ok) {
         toast.error(`API Error: ${response.statusText}`);
@@ -83,27 +105,12 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
       }
     },
     onFinish: (message) => {
-      // Save the complete chat to the database
-
       // Prepare all messages for storage
-      const messagesForStorage = [
-        ...messages,
-        message as unknown as ExtendedMessage,
-      ].map((msg) => {
-        const extMsg = msg as ExtendedMessage;
-        return {
-          ...extMsg,
-          model:
-            extMsg.role === "assistant"
-              ? extMsg.model || selectedModelId || "unknown"
-              : extMsg.model,
-        } as Message;
-      });
+      const messagesForStorage = [...messages, message];
 
       console.log("messagesForStorage", messagesForStorage);
 
-      // Save to DB
-      saveChatMessages(chatId, messagesForStorage as Message[])
+      saveChatMessages(chatId, messagesForStorage, currentId)
         .then((res) => {
           if (!res.ok) {
             throw new Error(
@@ -141,98 +148,39 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
     },
   });
 
-  // Filter messages to only show those in the current branch path
-  const filteredMessages = useMemo(() => {
-    // If no messages or no branch state, just return all messages
-    if (!messages.length) return messages;
-
-    // Create a map of message IDs to their messages for quick lookup
-    const messageMap = new Map(messages.map((msg) => [msg.id, msg]));
-
-    // Find the last message in the current branch
-    const lastMessage = messages[messages.length - 1];
-
-    // We'll build a chain from the last message up to the root
-    const messageChain = new Set<string>();
-    let currentId: string | null | undefined = lastMessage.id;
-
-    // Traverse up the parent chain to collect all messages in this branch
-    while (currentId) {
-      messageChain.add(currentId);
-      const currentMsg = messageMap.get(currentId);
-      currentId = currentMsg?.parent_id;
-    }
-
-    // Filter messages to only include those in the current branch path
-    return messages.filter((msg) => messageChain.has(msg.id));
-  }, [messages]);
-
-  // Type-safe submit handler
   const handleChatSubmit = async (
     e?: React.FormEvent,
-    options?: Record<string, any>
+    chatRequestOptions?: ExtendedRequestOptions
   ) => {
     try {
-      if (!chatId) {
-        throw new Error("Missing chat ID");
-      }
+      // Call handleSubmit from useAIChat which will create the user message with proper parent_id
+      // and trigger the onUserMessageProcessed callback for database operations
+      handleSubmit(e, chatRequestOptions);
 
-      setErrorState(null);
-
-      // When a new user message is about to be sent
-      if (input.trim() && !options?.preserveMessageId) {
-        // Generate a consistent ID for the user message
-        const messageId = generateUUID();
-
-        // Store a copy of the input
-        const userContent = input;
-
-        // Clear input immediately for better UX
-        setInput("");
-
-        // Note: We don't need to find the parent ID manually anymore
-        // as useAIChat will handle this automatically
-        await append(
-          {
-            id: messageId,
-            role: "user",
-            content: userContent,
-          } as Message,
-          {
-            ...(options || {}),
-            experimental_attachments: attachments,
-          } as ChatRequestOptions
-        );
-
-        // Scroll to the message after sending
-        setTimeout(() => {
-          if (scrollToMessageRef.current && messages.length > 0) {
-            const latestMessage = messages[messages.length - 1];
-            scrollToMessageRef.current(latestMessage.id);
-          }
-        }, 300);
-        return;
-      }
-
-      // For other cases like regeneration, use normal handleSubmit
-      handleSubmit(e, {
-        ...(options || {}),
-        experimental_attachments: attachments,
-      } as ExtendedRequestOptions);
-
-      // Scroll to the message after sending
+      // Scroll to the latest message after a short delay to ensure the UI has updated
       setTimeout(() => {
         if (scrollToMessageRef.current && messages.length > 0) {
           const latestMessage = messages[messages.length - 1];
           scrollToMessageRef.current(latestMessage.id);
         }
       }, 300);
+
+      return;
     } catch (err) {
       const error = err as Error;
       setErrorState(error.message);
       toast.error(error.message);
     }
   };
+
+  // Move this useEffect before the conditional return
+  useEffect(() => {
+    console.log("[chat] currentId is currently set to", currentId);
+
+    if (currentId) {
+      scrollToMessageRef.current?.(currentId);
+    }
+  }, [currentId]);
 
   if (error || errorState) {
     return (
@@ -249,10 +197,10 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
       <div className="flex relative flex-col min-w-0 h-dvh bg-background">
         <ChatHeader selectedModelId={selectedModelId} />
 
-        {filteredMessages.length > 0 ? (
+        {messages.length > 0 ? (
           <div className="flex-1 overflow-y-auto md:px-5 px-2">
             <Messages
-              messages={filteredMessages}
+              messages={activeMessages}
               isLoading={isLoading}
               isBlockVisible={isBlockVisible}
               chatId={chatId}
@@ -265,6 +213,7 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
               }}
               getBranchInfo={getBranchInfo}
               switchBranch={switchBranch}
+              currentId={currentId ?? ""}
             />
           </div>
         ) : (
@@ -283,7 +232,6 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
               setAttachments={setAttachments}
               messages={messages}
               setMessages={setMessages}
-              append={append}
             />
           </div>
         )}
@@ -301,7 +249,6 @@ export function Chat({ id, initialMessages, selectedModelId }: ChatProps) {
               setAttachments={setAttachments}
               messages={messages}
               setMessages={setMessages}
-              append={append}
             />
           </div>
         )}

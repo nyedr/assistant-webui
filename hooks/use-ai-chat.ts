@@ -2,8 +2,6 @@
 
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { Message, Attachment } from "ai";
-// Import generic types instead of specific ones that don't exist
-import type { RequestOptions as AIRequestOptions } from "ai";
 import useSWR from "swr";
 import { StreamProtocol } from "@/lib/types/chat";
 import {
@@ -11,31 +9,25 @@ import {
   ensureExtendedMessage,
   ExtendedMessage,
 } from "@/lib/utils/messages";
-// Import error handling utilities
 import { handleError } from "@/lib/utils/error-handling";
-// Import relationship functions from the new module
 import {
+  ensureParentRelationship,
   establishMessageRelationships,
   establishRelationshipsForNewMessage,
 } from "@/lib/messages/relationships";
-// Import the new streamChatMessages function
-// Import sanitization utilities
 import {
   sanitizeMessage,
   sanitizeUIMessages,
 } from "@/lib/messages/sanitization";
-// Import query utilities
 import { findLastUserMessageId } from "@/lib/messages/queries";
-// Import branching utilities
 import {
-  getBranchInfo as getMessageBranchInfo,
-  selectBranch,
+  getBranchInfo as getBranchInfoFromState,
+  getActivePathWithBranchState,
   prepareRetryState,
   preserveMessageContent,
+  type BranchState,
+  drillDownToLeafWithBranchState,
 } from "@/lib/messages/branching";
-// Use imported type from branching module
-import type { BranchState } from "@/lib/messages/branching";
-// Import middleware system
 import {
   ChatMiddleware,
   MiddlewareConfig,
@@ -44,22 +36,14 @@ import {
   executeOnRequestErrorMiddleware,
   getCombinedMiddlewares,
 } from "@/lib/chat/middleware";
-// Import dependency injection types
 import {
   HookDependencies,
   defaultDependencies,
 } from "@/lib/hooks/dependencies";
 import { continuePrompt } from "@/lib/ai/prompts";
 import { combineContent } from "@/lib/utils/chat";
+import { toast } from "sonner";
 
-// Define our own ChatRequestOptions that includes what we need
-export type ChatRequestOptions = AIRequestOptions & {
-  headers?: Record<string, string>;
-  body?: Record<string, any>;
-  experimental_attachments?: Attachment[];
-};
-
-// Extend our ChatRequestOptions to match what we need
 export interface ExtendedRequestOptions extends ExtendedChatRequestOptions {
   headers?: Record<string, string>;
   body?: Record<string, any>;
@@ -164,11 +148,23 @@ export interface UseAIChatOptions {
     toolName: string;
     args: any;
   }) => Promise<any>;
+
+  /**
+   * Callback when a user message has been fully processed with relationships.
+   * This is called after the message has been processed but before the AI request is made.
+   * Useful for saving messages to the database with proper parent-child relationships.
+   */
+  onUserMessageProcessed?: (
+    message: ExtendedMessage,
+    messages: ExtendedMessage[]
+  ) => Promise<void> | void;
 }
 
 export interface UseAIChatHelpers {
   /** Current messages in the chat */
   messages: ExtendedMessage[];
+  /** Filtered messages showing only the active branch path based on branch state */
+  activeMessages: ExtendedMessage[];
   /** The error object of the API request */
   error: undefined | Error;
   /**
@@ -176,8 +172,8 @@ export interface UseAIChatHelpers {
    * the assistant's response.
    */
   append: (
-    message: Message | Partial<ExtendedMessage>,
-    options?: ChatRequestOptions
+    message: ExtendedMessage,
+    options?: ExtendedRequestOptions
   ) => Promise<string | null | undefined>;
   /**
    * Reload the last AI chat response for the given chat history. If the last
@@ -233,26 +229,49 @@ export interface UseAIChatHelpers {
    */
   status: "submitted" | "streaming" | "ready" | "error";
   /**
-   * Switch to a different branch (alternative response) for a parent message
+   * Switch to a different branch (alternative response) for a parent message.
+   * This updates the branch state and sets the current message ID to the
+   * appropriate leaf node in the selected branch.
+   *
+   * @param parentMessageId - ID of the parent message whose branch should be switched
+   * @param branchIndex - Index of the branch to switch to (0-based)
    */
   switchBranch: (parentMessageId: string, branchIndex: number) => void;
   /**
-   * Get information about branches for a parent message
+   * Get information about branches for a parent message.
+   *
+   * @param parentMessageId - ID of the parent message to get branch info for
+   * @returns Object containing currentIndex (selected branch) and totalBranches
    */
   getBranchInfo: (parentMessageId: string) => {
     currentIndex: number;
     totalBranches: number;
   };
   /**
-   * Retry a specific assistant message to get an alternative response
+   * Retry a specific assistant message to get an alternative response.
+   * This creates a new branch from the parent message.
+   *
+   * @param messageId - ID of the assistant message to retry
+   * @returns ID of the new message if successful, null otherwise
    */
   retryMessage: (messageId: string) => Promise<string | null>;
   /** The id of the chat */
   id: string;
+  /** The current active message ID (tip of the active branch) */
+  currentId: string | null;
 }
 
 /**
- * Hook for AI chat with improved parent-child message tracking, branch handling, and retry behavior
+ * useAIChat - A React hook for AI chat interactions with branch management
+ *
+ * This hook provides:
+ * 1. Message state management with proper parent-child relationships
+ * 2. Branch management for alternate AI responses
+ * 3. Active message path calculation based on selected branches
+ * 4. API for switching between branches
+ *
+ * The hook maintains internal state about which branch is selected for each
+ * parent message and computes the active message path accordingly.
  */
 export function useAIChat({
   id,
@@ -273,6 +292,7 @@ export function useAIChat({
   onError,
   onStreamPart,
   onToolCall,
+  onUserMessageProcessed,
 }: UseAIChatOptions = {}): UseAIChatHelpers {
   // Merge provided dependencies with defaults
   const deps = useMemo(
@@ -322,11 +342,90 @@ export function useAIChat({
     undefined | Error
   >([chatId, "error"], null);
 
+  // Create a custom fetcher for branch state
+  const branchStateFetcher = useCallback(() => {
+    // Try to get the value from localStorage
+    const storedValue =
+      typeof window !== "undefined"
+        ? localStorage.getItem(`chat-branch-state-${chatId}`)
+        : null;
+
+    if (storedValue) {
+      try {
+        return JSON.parse(storedValue);
+      } catch (e) {
+        console.error("[useAIChat] Error parsing stored branch state:", e);
+      }
+    }
+    return {};
+  }, [chatId]);
+
   // Store which branch index is currently visible for each parent message
-  const { data: branchState = {}, mutate: mutateBranchState } =
-    useSWR<BranchState>([chatId, "branchState"], null, {
+  const { data: branchState = {}, mutate: mutateBranchStateInternal } =
+    useSWR<BranchState>([chatId, "branchState"], branchStateFetcher, {
       fallbackData: {},
     });
+
+  // Custom function to update branchState and persist it
+  const mutateBranchState = useCallback(
+    (updaterOrValue: BranchState | ((prev: BranchState) => BranchState)) => {
+      // Update SWR cache
+      mutateBranchStateInternal((prevState) => {
+        // Ensure prevState is never undefined
+        const currentState = prevState || {};
+
+        const newState =
+          typeof updaterOrValue === "function"
+            ? updaterOrValue(currentState)
+            : updaterOrValue;
+
+        // Persist to localStorage if available
+        if (typeof window !== "undefined") {
+          localStorage.setItem(
+            `chat-branch-state-${chatId}`,
+            JSON.stringify(newState)
+          );
+        }
+
+        console.log("[useAIChat] Updated branch state:", newState);
+        return newState;
+      }, false);
+    },
+    [mutateBranchStateInternal, chatId]
+  );
+
+  // Create a custom fetcher and initial data loader for currentId
+  const currentIdFetcher = useCallback(() => {
+    // Try to get the value from localStorage
+    const storedValue =
+      typeof window !== "undefined"
+        ? localStorage.getItem(`chat-current-id-${chatId}`)
+        : null;
+    return storedValue || null;
+  }, [chatId]);
+
+  // Store the current active message ID (tip of the active branch)
+  const { data: currentId = null, mutate: mutateCurrentId } = useSWR<
+    string | null
+  >([chatId, "currentId"], currentIdFetcher);
+
+  // Custom function to update currentId and persist it
+  const setCurrentId = useCallback(
+    (newId: string | null) => {
+      // Update SWR cache
+      mutateCurrentId(newId, false);
+
+      // Persist to localStorage if available
+      if (typeof window !== "undefined" && newId) {
+        localStorage.setItem(`chat-current-id-${chatId}`, newId);
+      } else if (typeof window !== "undefined") {
+        localStorage.removeItem(`chat-current-id-${chatId}`);
+      }
+
+      console.log("[useAIChat] Setting currentId to:", newId);
+    },
+    [mutateCurrentId, chatId]
+  );
 
   // Store the input value
   const [input, setInput] = useState(initialInput);
@@ -334,6 +433,7 @@ export function useAIChat({
   // Keep references to current state to avoid closure issues
   const messagesRef = useRef<ExtendedMessage[]>(messages);
   const branchStateRef = useRef<BranchState>(branchState);
+  const currentIdRef = useRef<string | null>(currentId);
 
   // Update refs when state changes
   useEffect(() => {
@@ -343,6 +443,39 @@ export function useAIChat({
   useEffect(() => {
     branchStateRef.current = branchState;
   }, [branchState]);
+
+  useEffect(() => {
+    currentIdRef.current = currentId;
+  }, [currentId]);
+
+  // Initialize currentId with the most recent message ID when messages change
+  useEffect(() => {
+    if (messages.length > 0 && currentId === null) {
+      // Check if we already have a stored value
+      const storedId =
+        typeof window !== "undefined"
+          ? localStorage.getItem(`chat-current-id-${chatId}`)
+          : null;
+
+      // Only set if no stored value exists
+      if (!storedId) {
+        console.log(
+          "[useAIChat] - (useEffect) Setting currentId to:",
+          messages[messages.length - 1].id
+        );
+        setCurrentId(messages[messages.length - 1].id);
+      } else {
+        console.log(
+          "[useAIChat] - (useEffect) Using stored currentId:",
+          storedId
+        );
+      }
+    }
+  }, [messages, currentId, setCurrentId, chatId]);
+
+  useEffect(() => {
+    console.log("[useAIChat] currentId is currently set to", currentId);
+  }, [currentId]);
 
   // Abort controller for canceling requests
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -395,46 +528,35 @@ export function useAIChat({
 
       // Process parent-child relationships for incoming message
       throttledMutateMessages((currentMessages) => {
-        // If we should replace the last message (e.g., during streaming)
-        if (replaceLastMessage) {
+        if (replaceLastMessage && currentMessages.length > 0) {
+          // If replacing last message, we need to handle the update differently
           const lastMessageIndex = currentMessages.length - 1;
+          const lastMessage = currentMessages[lastMessageIndex];
 
-          // If there are no messages or the last one isn't from the assistant, just append
-          if (
-            lastMessageIndex < 0 ||
-            currentMessages[lastMessageIndex].role !== "assistant"
-          ) {
-            // This is a new message, so establish parent-child relationships
-            return establishRelationshipsForNewMessage(
-              currentMessages,
-              message,
-              { modelId: model }
-            );
-          } else {
-            // Replace the last message but keep its relationship properties
+          // Only replace if it's an assistant message (standard streaming behavior)
+          if (lastMessage.role === "assistant") {
+            // Create a copy of the messages array
             const updatedMessages = [...currentMessages];
-            const existingMessage = updatedMessages[lastMessageIndex];
 
-            updatedMessages[lastMessageIndex] = {
+            // Preserve the existing parent_id and children_ids for the assistant message
+            const updatedMessage = {
               ...message,
-              // Preserve relationship data
-              parent_id: existingMessage.parent_id || message.parent_id,
-              children_ids: existingMessage.children_ids || [],
+              parent_id: message.parent_id || lastMessage.parent_id,
+              children_ids: lastMessage.children_ids || [],
             };
 
-            // Ensure parent-child relationships are properly established
-            return establishRelationshipsForNewMessage(
-              updatedMessages.slice(0, -1),
-              updatedMessages[lastMessageIndex],
-              { preserveMessageId: updatedMessages[lastMessageIndex].id }
-            );
+            // Replace the last message
+            updatedMessages[lastMessageIndex] = updatedMessage;
+
+            return updatedMessages;
           }
-        } else {
-          // This is a new message, establish parent-child relationships
-          return establishRelationshipsForNewMessage(currentMessages, message, {
-            modelId: model,
-          });
         }
+
+        // This is a new message or we're not replacing, establish relationships
+        return establishRelationshipsForNewMessage(currentMessages, message, {
+          modelId: model,
+          parentMessageId: message.parent_id || undefined,
+        });
       }, false);
     },
     [throttledMutateMessages, mutateStatus, model]
@@ -448,28 +570,26 @@ export function useAIChat({
       messages,
       headers: reqHeaders,
       body: reqBody,
-      options,
+      chatRequestOptions,
       attachments,
     }: {
-      messages: Message[] | ExtendedMessage[];
+      messages: ExtendedMessage[];
       headers?: Record<string, string>;
       body?: Record<string, any>;
-      options?: ExtendedRequestOptions;
+      chatRequestOptions?: ExtendedRequestOptions;
       attachments?: Attachment[];
     }) => {
       console.log("[useAIChat] triggerRequest called with:", {
         messageCount: messages.length,
         hasHeaders: !!reqHeaders,
         hasBody: !!reqBody,
-        hasOptions: !!options,
+        hasChatRequestOptions: !!chatRequestOptions,
         hasAttachments: !!attachments,
       });
 
       try {
-        // Set status to submitted immediately at the start of the request
         mutateStatus("submitted");
 
-        // Execute before-request middleware if any exists
         await executeBeforeRequestMiddleware(
           messages as ExtendedMessage[],
           middlewaresRef.current
@@ -477,37 +597,48 @@ export function useAIChat({
 
         // Create a new abort controller for this request
         abortControllerRef.current = new AbortController();
-        console.log("[useAIChat] Created new abort controller");
 
-        // Process messages to ensure they have proper relationships
         const currentMessages = messagesRef.current;
-        console.log(
-          "[useAIChat] Current message count:",
-          currentMessages.length
-        );
 
-        // Process messages to ensure they have proper relationships
         const processedMessages = messages.map((msg) => {
-          // If the message is already in the current messages, keep it as is
           const existingMsg = currentMessages.find((m) => m.id === msg.id);
           if (existingMsg) {
-            console.log("[useAIChat] Using existing message:", msg.id);
-            return ensureExtendedMessage(msg as Message);
+            // Use existing message but ensure parent_id is preserved
+            const processed = ensureExtendedMessage(msg as Message);
+
+            // Ensure parent_id is preserved from the existing message if not explicitly set
+            if (!processed.parent_id && existingMsg.parent_id) {
+              processed.parent_id = existingMsg.parent_id;
+            }
+
+            return processed;
           }
 
-          console.log(
-            "[useAIChat] Preparing message relationships for:",
-            msg.id
-          );
-          // Otherwise, establish appropriate relationships
+          const parentMessageId =
+            (msg as ExtendedMessage).parent_id ||
+            chatRequestOptions?.options?.parentMessageId;
+
+          // Log for debugging
+          console.log("[useAIChat] Processing new message:", {
+            id: msg.id,
+            role: msg.role,
+            parentMessageId: parentMessageId,
+          });
+
           return ensureExtendedMessage(
             establishRelationshipsForNewMessage(
               currentMessages,
-              msg as Message,
-              { modelId: metaRef.current.model || "" }
-            ).find((m) => m.id === msg.id) as Message
+              msg as ExtendedMessage,
+              {
+                modelId:
+                  metaRef.current.model || chatRequestOptions?.options?.modelId,
+                parentMessageId: parentMessageId,
+              }
+            ).find((m) => m.id === msg.id) as ExtendedMessage
           );
         });
+
+        console.log("[triggerRequest] Processed messages:", processedMessages);
 
         // Keep track of the original state for error recovery
         const previousMessages = [...currentMessages];
@@ -528,12 +659,9 @@ export function useAIChat({
         const lastMessage = processedMessages[
           processedMessages.length - 1
         ] as ExtendedMessage;
-        console.log("[useAIChat] Last message ID:", lastMessage.id);
 
-        console.log("[useAIChat] Calling adaptCallChatApi");
-        // Stream the message to the API
         await deps.chatAPIClient.streamChatMessages({
-          messages: processedMessages as ExtendedMessage[], // Use type assertion to bypass type checking
+          messages: processedMessages,
           id: chatId,
           model: metaRef.current.model || model || "unknown",
           api,
@@ -545,34 +673,34 @@ export function useAIChat({
           body: {
             ...metaRef.current.body,
             ...reqBody,
-            ...(options?.options || {}),
+            ...(chatRequestOptions?.options || {}),
           },
           attachments,
           getAbortController: () => abortControllerRef.current!,
           onResponse,
           onUpdate: handleUpdate,
           onStreamPart: (part, delta, type) => {
-            // No middleware transformation, just call the original handler
             if (onStreamPart) {
               onStreamPart(part, delta, type);
             }
           },
           onFinish: async (message, finishReason) => {
-            console.log("[useAIChat] Stream finished", {
-              messageId: message.id,
+            // Log detailed message info for debugging
+            console.log("[useAIChat] Stream finished:", {
+              id: message.id,
+              role: message.role,
+              parent_id: message.parent_id,
               finishReason,
             });
 
-            // Execute after-request middleware
             await executeAfterRequestMiddleware(
               messagesRef.current,
               middlewaresRef.current
             );
 
-            // Set status to ready
             mutateStatus("ready");
+            setCurrentId(message.id);
 
-            // Log finish information with detailed context
             deps.logger.debug("Chat message stream finished", {
               module: "useAIChat",
               context: {
@@ -634,7 +762,6 @@ export function useAIChat({
         });
         console.log("[useAIChat] streamChatMessages completed successfully");
 
-        // Return the ID of the last message
         return lastMessage.id;
       } catch (err) {
         console.error("[useAIChat] Error in triggerRequest:", err);
@@ -684,8 +811,8 @@ export function useAIChat({
    */
   const append = useCallback(
     async (
-      message: Message | Partial<ExtendedMessage>,
-      options?: ChatRequestOptions
+      message: ExtendedMessage,
+      chatRequestOptions?: ExtendedRequestOptions
     ) => {
       deps.logger.debug("append called with message", {
         context: {
@@ -711,32 +838,23 @@ export function useAIChat({
         // Store the current messages for potential rollback
         const previousMessages = messagesRef.current;
 
-        // Set parent_id for user messages if not already set
-        if (extendedMessage.role === "user" && !extendedMessage.parent_id) {
-          // Find the last assistant message to use as parent
-          for (let i = previousMessages.length - 1; i >= 0; i--) {
-            if (previousMessages[i].role === "assistant") {
-              extendedMessage.parent_id = previousMessages[i].id;
-              break;
-            }
-          }
-        }
+        // Get active messages for proper parent-child relationships
+        const activeMessagesArray = currentIdRef.current
+          ? getActivePathWithBranchState(
+              previousMessages,
+              currentIdRef.current,
+              branchStateRef.current
+            )
+          : previousMessages;
 
-        // For assistant messages, set parent to the last user message if not already set
-        if (
-          extendedMessage.role === "assistant" &&
-          !extendedMessage.parent_id
-        ) {
-          const lastUserMessageId = findLastUserMessageId(previousMessages);
-          if (lastUserMessageId) {
-            extendedMessage.parent_id = lastUserMessageId;
-          }
-        }
+        extendedMessage.parent_id =
+          chatRequestOptions?.options?.parentMessageId;
 
-        // Ensure createdAt is a string (ISO format)
-        if (extendedMessage.createdAt instanceof Date) {
-          (extendedMessage as any).createdAt =
-            extendedMessage.createdAt.toISOString();
+        if (!extendedMessage.parent_id) {
+          extendedMessage.parent_id = ensureParentRelationship(
+            activeMessagesArray,
+            extendedMessage
+          );
         }
 
         deps.logger.debug("Extended message created", {
@@ -746,9 +864,12 @@ export function useAIChat({
 
         // Update the messages state with the new user message
         const processedMessages = establishRelationshipsForNewMessage(
-          previousMessages,
+          activeMessagesArray,
           extendedMessage,
-          { modelId: model }
+          {
+            modelId: model,
+            parentMessageId: message.parent_id || undefined,
+          }
         );
 
         deps.logger.debug("Updated messages with relationships", {
@@ -756,24 +877,39 @@ export function useAIChat({
           context: { messageCount: processedMessages.length },
         });
 
-        // Update the messages state
+        // Update the messages state IMMEDIATELY to show the user message in the UI
         throttledMutateMessages(processedMessages, false);
 
         // Update the form state
         if (
-          options?.body?.prompt === undefined &&
+          chatRequestOptions?.body?.prompt === undefined &&
           extendedMessage.role === "user"
         ) {
           setInput("");
         }
 
+        // If this is a user message and we have the callback, call it
+        if (extendedMessage.role === "user" && onUserMessageProcessed) {
+          try {
+            // Wait for any database operations to complete
+            await onUserMessageProcessed(extendedMessage, processedMessages);
+          } catch (callbackError) {
+            if (callbackError instanceof Error) {
+              handleError(callbackError, "useAIChat", {
+                context: "Error in onUserMessageProcessed callback",
+                originalError: callbackError.message,
+              });
+            }
+          }
+        }
+
         // Handle network request and streaming
         const result = await triggerRequest({
           messages: processedMessages,
-          headers: options?.headers,
-          body: options?.body,
-          options: options as ExtendedRequestOptions,
-          attachments: options?.experimental_attachments,
+          headers: chatRequestOptions?.headers,
+          body: chatRequestOptions?.body,
+          chatRequestOptions: chatRequestOptions as ExtendedRequestOptions,
+          attachments: chatRequestOptions?.experimental_attachments,
         });
 
         return result;
@@ -819,6 +955,7 @@ export function useAIChat({
       mutateStatus,
       onError,
       deps,
+      onUserMessageProcessed,
     ]
   );
 
@@ -830,8 +967,17 @@ export function useAIChat({
       // Get the current messages
       const currentMessages = messagesRef.current;
 
+      // Get active messages based on currentId
+      const activeMessagesArray = currentIdRef.current
+        ? getActivePathWithBranchState(
+            currentMessages,
+            currentIdRef.current,
+            branchStateRef.current
+          )
+        : currentMessages;
+
       // Sanitize the messages before processing
-      const sanitizedMessages = sanitizeUIMessages(currentMessages);
+      const sanitizedMessages = sanitizeUIMessages(activeMessagesArray);
 
       if (sanitizedMessages.length === 0) {
         return null;
@@ -840,9 +986,15 @@ export function useAIChat({
       // Get the last message in the chat
       const lastMessage = sanitizedMessages[sanitizedMessages.length - 1];
 
+      let parentMessageId = chatRequestOptions.options?.parentMessageId;
+
+      if (!parentMessageId) {
+        parentMessageId =
+          ensureParentRelationship(sanitizedMessages, lastMessage) ?? undefined;
+      }
+
       // If the options include a parentMessageId, we're doing a branch/retry
-      if (chatRequestOptions.options?.parentMessageId) {
-        const parentMessageId = chatRequestOptions.options.parentMessageId;
+      if (parentMessageId) {
         const parentIndex = sanitizedMessages.findIndex(
           (msg) => msg.id === parentMessageId
         );
@@ -853,7 +1005,7 @@ export function useAIChat({
 
           // Check for a preserved message ID - used for retries to preserve message history
           const preserveMessageId =
-            chatRequestOptions.options.preserveMessageId;
+            chatRequestOptions.options?.preserveMessageId;
 
           // If we're preserving message branch history, we need to ensure the UI state
           // maintains the relationship data
@@ -891,17 +1043,14 @@ export function useAIChat({
             messages: messagesToKeep,
             headers: chatRequestOptions.headers,
             body: chatRequestOptions.body,
-            options: chatRequestOptions,
+            chatRequestOptions: chatRequestOptions,
           });
         }
       }
 
-      // For standard reload, use findLastUserMessageId to find the last user message
-      // if the last message is an assistant message
       if (lastMessage.role === "assistant") {
         const lastUserMessageId = findLastUserMessageId(sanitizedMessages);
         if (lastUserMessageId) {
-          // Find all messages up to and including the last user message
           const lastUserIndex = sanitizedMessages.findIndex(
             (msg) => msg.id === lastUserMessageId
           );
@@ -914,7 +1063,7 @@ export function useAIChat({
               messages: messagesToSend,
               headers: chatRequestOptions.headers,
               body: chatRequestOptions.body,
-              options: chatRequestOptions,
+              chatRequestOptions: chatRequestOptions,
             });
           }
         }
@@ -923,7 +1072,7 @@ export function useAIChat({
           messages: sanitizedMessages.slice(0, -1),
           headers: chatRequestOptions.headers,
           body: chatRequestOptions.body,
-          options: chatRequestOptions,
+          chatRequestOptions: chatRequestOptions,
         });
       }
 
@@ -932,10 +1081,16 @@ export function useAIChat({
         messages: sanitizedMessages,
         headers: chatRequestOptions.headers,
         body: chatRequestOptions.body,
-        options: chatRequestOptions,
+        chatRequestOptions: chatRequestOptions,
       });
     },
-    [triggerRequest, throttledMutateMessages, messagesRef]
+    [
+      triggerRequest,
+      throttledMutateMessages,
+      messagesRef,
+      currentIdRef,
+      branchStateRef,
+    ]
   );
 
   /**
@@ -966,10 +1121,23 @@ export function useAIChat({
             : newMessages;
 
         // Sanitize messages before updating state
-        return sanitizeUIMessages(updatedMessages);
+        const sanitizedMessages = sanitizeUIMessages(updatedMessages);
+
+        // Ensure currentId points to a valid message after updating messages
+        if (sanitizedMessages.length > 0) {
+          // If current ID is not in the new message set, update it to the last message
+          const messageExists = sanitizedMessages.some(
+            (msg) => msg.id === currentIdRef.current
+          );
+          if (!messageExists || !currentIdRef.current) {
+            setCurrentId(sanitizedMessages[sanitizedMessages.length - 1].id);
+          }
+        }
+
+        return sanitizedMessages;
       }, false);
     },
-    [throttledMutateMessages]
+    [throttledMutateMessages, currentIdRef, setCurrentId]
   );
 
   /**
@@ -990,77 +1158,242 @@ export function useAIChat({
       e?: { preventDefault?: () => void },
       chatRequestOptions?: ExtendedRequestOptions
     ) => {
-      console.log("[useAIChat] handleSubmit called", {
-        input,
-        chatRequestOptions,
-      });
+      try {
+        if (!chatId) {
+          throw new Error("Missing chat ID");
+        }
 
-      if (e?.preventDefault) {
-        e.preventDefault();
+        const isVlaidInput = input.trim();
+
+        if (
+          !isVlaidInput &&
+          chatRequestOptions?.experimental_attachments?.length === 0
+        ) {
+          toast.error("Please enter a message or add an attachment");
+          return;
+        }
+
+        const messageId = chatRequestOptions?.options?.preserveMessageId
+          ? chatRequestOptions.options?.preserveMessageId
+          : deps.idGenerator.generate();
+
+        const userContent = input;
+
+        setInput("");
+
+        // Get the parent ID (last assistant message)
+        const currentMessages = messagesRef.current;
+
+        const newUserMessage = {
+          id: messageId,
+          role: "user",
+          content: userContent,
+          createdAt: new Date(),
+        } as ExtendedMessage;
+
+        // DEBUG: Log before parent relationship is established
+        console.log("[DEBUG] User message before parent_id assignment:", {
+          id: newUserMessage.id,
+          role: newUserMessage.role,
+          parent_id: newUserMessage.parent_id,
+        });
+
+        // Find a parent for the message
+        newUserMessage.parent_id = ensureParentRelationship(
+          currentMessages,
+          newUserMessage
+        );
+
+        // DEBUG: Log after parent relationship is established
+        console.log("[DEBUG] User message after parent_id assignment:", {
+          id: newUserMessage.id,
+          role: newUserMessage.role,
+          parent_id: newUserMessage.parent_id,
+          messageCount: currentMessages.length,
+        });
+
+        // List last 5 messages in the currentMessages array for context
+        if (currentMessages.length > 0) {
+          console.log(
+            "[DEBUG] Last messages in context:",
+            currentMessages.slice(-5).map((msg) => ({
+              id: msg.id,
+              role: msg.role,
+              parent_id: (msg as ExtendedMessage).parent_id,
+            }))
+          );
+        }
+
+        await append(newUserMessage, {
+          ...(chatRequestOptions || {}),
+          experimental_attachments:
+            chatRequestOptions?.experimental_attachments,
+        } as ExtendedChatRequestOptions);
+      } catch (error) {
+        console.error("Error submitting chat request:", error);
+        toast.error("An error occurred while submitting the chat request.");
       }
+    },
+    [input, append, setInput, deps, messagesRef]
+  );
 
-      if (!input) {
-        console.log("[useAIChat] Empty input, not submitting");
+  // Compute active messages based on currentId and branchState
+  const activeMessages = useMemo(() => {
+    if (!currentId) {
+      console.log("[useAIChat] No currentId, showing all messages:", {
+        totalMessages: messages.length,
+      });
+      return messages;
+    }
+
+    // Use the utility from branching module to compute the active path with branch awareness
+    const activePath = getActivePathWithBranchState(
+      messages,
+      currentId,
+      branchState
+    );
+
+    console.log("[useAIChat] Active path computed:", {
+      pathLength: activePath.length,
+      fromCurrentId: currentId,
+      totalMessages: messages.length,
+      branchStateEntries: Object.keys(branchState).length,
+    });
+
+    return activePath;
+  }, [messages, currentId, branchState]);
+
+  // Log when active messages update
+  useEffect(() => {
+    console.log("[useAIChat] activeMessages updated:", {
+      count: activeMessages.length,
+      currentId,
+    });
+  }, [activeMessages, currentId]);
+
+  /**
+   * Switch to a different branch (alternative response) for a parent message.
+   * This updates the branch state and sets the current message ID to the
+   * appropriate leaf node in the selected branch.
+   */
+  const switchBranch = useCallback(
+    (parentMessageId: string, branchIndex: number): void => {
+      console.log(
+        "[useAIChat] switchBranch called with parentMessageId:",
+        parentMessageId,
+        "and branchIndex:",
+        branchIndex,
+        "current branchState:",
+        branchStateRef.current
+      );
+
+      // Check if we're already on this branch
+      const currentBranchIndex = branchStateRef.current[parentMessageId];
+      if (currentBranchIndex === branchIndex) {
+        console.log(
+          "[useAIChat] Already on branch index",
+          branchIndex,
+          "for parent",
+          parentMessageId
+        );
         return;
       }
 
-      const userMessage: ExtendedMessage = {
-        id: deps.idGenerator.generate(),
-        role: "user",
-        content: input,
-        createdAt: new Date(), // This should now be a Date object
-        parent_id: null,
-        children_ids: [],
+      // Find the parent message and get the selected child ID
+      const parentMessage = messagesRef.current.find(
+        (msg) => msg.id === parentMessageId
+      );
+
+      console.log("[useAIChat] Parent message:", parentMessage);
+
+      if (
+        !parentMessage ||
+        !parentMessage.children_ids ||
+        parentMessage.children_ids.length <= branchIndex
+      ) {
+        console.error("[useAIChat] Invalid parent message or branch index:", {
+          parentMessage,
+          branchIndex,
+          childrenLength: parentMessage?.children_ids?.length,
+        });
+        return;
+      }
+
+      const selectedChildId = parentMessage.children_ids[branchIndex];
+      if (!selectedChildId) {
+        console.error(
+          "[useAIChat] No child found at branch index:",
+          branchIndex
+        );
+        return;
+      }
+
+      // Create a new branch state with the updated selection
+      const newBranchState = {
+        ...branchStateRef.current,
+        [parentMessageId]: branchIndex,
       };
 
-      console.log("[useAIChat] Created user message", userMessage);
+      console.log(
+        "[useAIChat] Selected child ID from parent message:",
+        selectedChildId
+      );
 
-      setInput("");
+      // Immediately update the branch state
+      mutateBranchState(newBranchState);
 
-      try {
-        console.log("[useAIChat] Calling append with user message");
-        return await append(userMessage, chatRequestOptions);
-      } catch (error) {
-        console.error("[useAIChat] Error in handleSubmit:", error);
-        throw error;
-      }
+      // Create messages map for traversal
+      const messagesMap = new Map(messagesRef.current.map((m) => [m.id, m]));
+
+      // Compute the leaf node using the updated branch state
+      const bottomLeafId = drillDownToLeafWithBranchState(
+        selectedChildId,
+        messagesMap,
+        newBranchState // Use the new state directly
+      );
+
+      console.log(
+        "[useAIChat] Setting currentId to leaf:",
+        bottomLeafId,
+        "using updated branch state"
+      );
+
+      setCurrentId(bottomLeafId);
+
+      console.log(
+        "[useAIChat] Switched branch to index:",
+        branchIndex,
+        "on parent:",
+        parentMessageId,
+        "and drilled down to leaf:",
+        bottomLeafId
+      );
     },
-    [input, append, setInput, deps]
+    [mutateBranchState, setCurrentId, messagesRef, branchStateRef]
   );
 
   /**
-   * Switch to a different branch (alternative response) for a parent message
+   * Get information about branches for a parent message.
+   * Returns the current branch index and total number of branches.
+   *
+   * @param parentMessageId - ID of the parent message to get branch info for
+   * @returns Object containing currentIndex (selected branch) and totalBranches
    */
-  const switchBranch = useCallback(
-    (parentMessageId: string, branchIndex: number) => {
-      // Update the branch state to show the selected branch index
-      mutateBranchState((prevState) => ({
-        ...prevState,
-        [parentMessageId]: branchIndex,
-      }));
-
-      // Update messages using the selectBranch utility function
-      throttledMutateMessages((prevMessages) => {
-        return selectBranch(prevMessages, parentMessageId, branchIndex);
-      }, false);
+  const getBranchInfo = useCallback(
+    (parentMessageId: string) => {
+      // Use the utility from branching module that doesn't rely on currentId
+      return getBranchInfoFromState(
+        messagesRef.current,
+        parentMessageId,
+        branchStateRef.current
+      );
     },
-    [messages, mutateBranchState, throttledMutateMessages]
+    [branchStateRef]
   );
 
   /**
-   * Get information about branches for a parent message
-   */
-  const getBranchInfo = useCallback((parentMessageId: string) => {
-    // Use the utility function from branching module
-    return getMessageBranchInfo(
-      messagesRef.current,
-      parentMessageId,
-      branchStateRef.current
-    );
-  }, []);
-
-  /**
-   * Retry a specific assistant message to get an alternative response
+   * Retry a specific assistant message to get an alternative response.
+   * This creates a new branch from the parent message.
    */
   const retryMessage = useCallback(
     async (messageId: string) => {
@@ -1096,19 +1429,17 @@ export function useAIChat({
       // Generate a random seed to prevent cached responses from the model
       const randomSeed = Math.floor(Math.random() * 1000000).toString();
 
-      // Call reload with the parent message ID to generate a new branch
       const result = await reload({
         options: {
           parentMessageId,
-          preserveMessageId: messageToRetry.id, // Indicate we're preserving this message
+          preserveMessageId: messageToRetry.id,
         },
         headers: {
-          // Add a custom header for the random seed
           "x-random-seed": randomSeed,
         },
         body: {
-          // Also add the seed to the body for providers that might check there
           seed: randomSeed,
+          temperature: 0.6,
         },
       });
 
@@ -1128,7 +1459,7 @@ export function useAIChat({
 
       return result;
     },
-    [reload, throttledMutateMessages, model]
+    [reload, throttledMutateMessages, model, setCurrentId]
   );
 
   /**
@@ -1160,18 +1491,28 @@ export function useAIChat({
       mutateStatus("submitted");
 
       const currentMessages = messagesRef.current;
-      const parentIndex = currentMessages.findIndex(
+
+      // Get active messages based on currentId
+      const activeMessagesArray = currentIdRef.current
+        ? getActivePathWithBranchState(
+            currentMessages,
+            currentIdRef.current,
+            branchStateRef.current
+          )
+        : currentMessages;
+
+      const parentIndex = activeMessagesArray.findIndex(
         (msg) => msg.id === parentMessageId
       );
 
       if (parentIndex < 0) {
         console.error(
-          "[useAIChat] Parent message not found in current messages"
+          "[useAIChat] Parent message not found in active messages"
         );
         return null;
       }
 
-      const messagesUpToParent = currentMessages.slice(0, parentIndex + 1);
+      const messagesUpToParent = activeMessagesArray.slice(0, parentIndex + 1);
 
       const systemMessage = {
         id: deps.idGenerator.generate(),
@@ -1328,79 +1669,8 @@ export function useAIChat({
           onUpdate: customOnUpdate,
           onStreamPart,
           onFinish: async (message, finishReason) => {
-            // Final update to remove loading indicator while preserving all messages
-            throttledMutateMessages(() => {
-              // Use the original messages as a base and update only the continued message
-              return originalMessages.map((msg) => {
-                if (msg.id === messageId) {
-                  const updatedMsg = messagesRef.current.find(
-                    (m) => m.id === messageId
-                  );
-
-                  const continuationContent = updatedMsg
-                    ? updatedMsg.content.substring(originalContent.length)
-                    : "";
-
-                  return {
-                    ...msg,
-                    content: updatedMsg
-                      ? combineContent(originalContent, continuationContent)
-                      : msg.content,
-                    isLoading: false,
-                  };
-                }
-                return msg;
-              });
-            }, false);
-
-            // Set status to ready
             mutateStatus("ready");
-
-            // Call the original onFinish if provided
-            if (onFinish) {
-              // Find the updated message to pass to onFinish
-              const updatedMessage = messagesRef.current.find(
-                (msg) => msg.id === messageId
-              );
-              if (updatedMessage) {
-                onFinish(updatedMessage, finishReason);
-              }
-            }
-
-            // Final check to ensure we haven't lost any messages
-            setTimeout(() => {
-              if (messagesRef.current.length < originalMessages.length) {
-                console.warn(
-                  "[useAIChat] Message count decreased after continuation, restoring original messages"
-                );
-                throttledMutateMessages(() => {
-                  // Use the original messages as a base and update only the continued message
-                  return originalMessages.map((msg) => {
-                    if (msg.id === messageId) {
-                      // Find the current version of this message to get the updated content
-                      const updatedMsg = messagesRef.current.find(
-                        (m) => m.id === messageId
-                      );
-
-                      // Get the continuation content
-                      const continuationContent = updatedMsg
-                        ? updatedMsg.content.substring(originalContent.length)
-                        : "";
-
-                      return {
-                        ...msg,
-                        // Use the combineContent function to ensure seamless continuation
-                        content: updatedMsg
-                          ? combineContent(originalContent, continuationContent)
-                          : msg.content,
-                        isLoading: false,
-                      };
-                    }
-                    return msg;
-                  });
-                }, false);
-              }
-            }, 500); // Small delay to ensure this runs after any other updates
+            abortControllerRef.current = null;
           },
         });
 
@@ -1457,11 +1727,14 @@ export function useAIChat({
       handleUpdate,
       metaRef,
       abortControllerRef,
+      setCurrentId,
+      currentIdRef,
     ]
   );
 
   return {
     messages,
+    activeMessages,
     error,
     append,
     reload,
@@ -1478,5 +1751,6 @@ export function useAIChat({
     getBranchInfo,
     retryMessage,
     id: chatId,
+    currentId,
   };
 }

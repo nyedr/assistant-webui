@@ -19,6 +19,8 @@ import {
   handleError,
   createChatError,
 } from "@/lib/utils/error-handling";
+import { ExtendedMessage } from "../utils";
+import { ensureParentRelationship } from "../messages/relationships";
 
 /**
  * Interface for streaming chat messages to an API
@@ -148,32 +150,23 @@ async function adaptCallChatApi({
     data: JSONValue[] | undefined;
     replaceLastMessage: boolean;
   }) => {
-    // Convert UIMessage back to ChatExtendedMessage
-    const chatExtMsg: ChatExtendedMessage = {
+    // Find parent_id for assistant messages if not already set
+    let parentId = (options.message as any).parent_id;
+
+    parentId = ensureParentRelationship(
+      messages,
+      options.message as ExtendedMessage
+    );
+
+    // Convert UIMessage back to ChatExtendedMessage with proper relationship data
+    const chatExtMsg: ExtendedMessage = {
       ...options.message,
-      parent_id: (options.message as any).parent_id,
+      parent_id: parentId,
       children_ids: (options.message as any).children_ids || [],
       model: (options.message as any).model || model || "unknown",
-      // Preserve parts
       parts: options.message.parts,
-      // Make sure data is Record<string, any> | undefined
-      data: options.message.data as Record<string, any> | undefined,
+      reasoning: options.message.reasoning,
     };
-
-    // Find the last user message to set as parent for the assistant message
-    let parentId = null;
-    if (chatExtMsg.role === "assistant") {
-      // Find the last user message to use as parent
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].role === "user") {
-          parentId = messages[i].id;
-          break;
-        }
-      }
-
-      // Set the parent_id for the assistant message
-      chatExtMsg.parent_id = parentId;
-    }
 
     // Update the UI with the processed message
     handleUpdate({
@@ -214,14 +207,19 @@ async function adaptCallChatApi({
     onResponse,
     onUpdate: adaptedOnUpdate,
     onFinish: (message, details) => {
-      // Convert UIMessage to ChatExtendedMessage
-      const adaptedMessage: ChatExtendedMessage = {
+      const parentId = ensureParentRelationship(
+        messages,
+        message as ExtendedMessage
+      );
+
+      // Convert UIMessage to ChatExtendedMessage with all necessary fields
+      const adaptedMessage: ExtendedMessage = {
         ...message,
-        parent_id: (message as any).parent_id,
-        children_ids: (message as any).children_ids || [],
+        parent_id: parentId || body?.parentMessageId || null,
+        children_ids: [],
         model: (message as any).model || model || "unknown",
         parts: message.parts || [],
-        data: message.data as Record<string, any> | undefined,
+        reasoning: message.reasoning,
       };
 
       onFinish(adaptedMessage, details);

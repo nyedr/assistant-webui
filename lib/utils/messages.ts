@@ -41,26 +41,8 @@ export interface ExtendedChatRequestOptions {
   options?: {
     parentMessageId?: string;
     preserveMessageId?: string;
+    modelId?: string;
   };
-}
-
-/**
- * Removes empty or invalid messages from the response
- */
-export function sanitizeResponseMessages(
-  messages: Array<Message>
-): Array<Message> {
-  return messages.filter((message) => {
-    if (message.role !== "assistant") {
-      return true;
-    }
-
-    return (
-      message.content.trim().length > 0 ||
-      (Array.isArray(message.toolInvocations) &&
-        message.toolInvocations.length > 0)
-    );
-  });
 }
 
 /**
@@ -78,13 +60,6 @@ export function sanitizeUIMessages(messages: Array<Message>): Array<Message> {
         message.toolInvocations.length > 0)
     );
   });
-}
-
-/**
- * Returns the most recent user message from the array
- */
-export function getMostRecentUserMessage(messages: Array<Message>) {
-  return messages.findLast((message) => message.role === "user");
 }
 
 /**
@@ -116,148 +91,16 @@ export function findLastUserMessageId(messages: Message[]): string | null {
 }
 
 /**
- * Updates the parent message's children list when a new message is generated
- * @param messages Current message array
- * @param message New message to process
- * @param preservedMessageId Optional ID of message being preserved (for retry)
- * @returns Updated messages array
- */
-export function updateMessageRelationships(
-  messages: Message[],
-  message: ExtendedMessage,
-  preservedMessageId?: string
-): Message[] {
-  // Create a working copy of messages that all have the extended fields
-  const currentMessages = messages.map((msg) => ensureExtendedMessage(msg));
-
-  // For a new assistant message, the parent should be the last user message
-  // For a new user message, the parent should be the last assistant message if any
-  let parentMessageId = message.parent_id || null;
-
-  // If parent_id isn't set yet, find the appropriate parent
-  if (!parentMessageId) {
-    if (message.role === "assistant") {
-      // Find the most recent user message
-      for (let i = currentMessages.length - 1; i >= 0; i--) {
-        if (currentMessages[i].role === "user") {
-          parentMessageId = currentMessages[i].id;
-          break;
-        }
-      }
-    } else if (message.role === "user") {
-      // Find the most recent assistant message if any
-      for (let i = currentMessages.length - 1; i >= 0; i--) {
-        if (currentMessages[i].role === "assistant") {
-          parentMessageId = currentMessages[i].id;
-          break;
-        }
-      }
-    }
-  }
-
-  // Update the message's parent_id
-  const updatedMessage = {
-    ...message,
-    parent_id: parentMessageId,
-    children_ids: message.children_ids || [],
-    // Ensure model is never null for assistant messages
-    model:
-      message.role === "assistant" ? message.model || "unknown" : message.model,
-    parts: Array.isArray(message.parts) ? message.parts : [],
-  };
-
-  // Find the parent message and update its children_ids
-  if (parentMessageId) {
-    const parentIndex = currentMessages.findIndex(
-      (m) => m.id === parentMessageId
-    );
-
-    if (parentIndex >= 0) {
-      const parent = currentMessages[parentIndex];
-      // Ensure children_ids is an array even if undefined
-      const childrenIds = parent.children_ids || [];
-
-      // Add this message to the parent's children if not already there
-      if (!childrenIds.includes(message.id)) {
-        currentMessages[parentIndex] = {
-          ...parent,
-          children_ids: [...childrenIds, message.id],
-        } as Message;
-      }
-    }
-  }
-
-  // Replace or add the message in the array
-  const messageIndex = currentMessages.findIndex((m) => m.id === message.id);
-  if (messageIndex >= 0) {
-    currentMessages[messageIndex] = updatedMessage as Message;
-  } else {
-    currentMessages.push(updatedMessage as Message);
-  }
-
-  return currentMessages as Message[];
-}
-
-/**
- * Prepares a message with proper parent-child relationships
- * @param message The message to prepare
- * @param messages The current message array to establish relationships from
- * @param selectedModelId The model ID to use
- * @returns Prepared message with relationships
- */
-export function prepareMessageWithRelationships(
-  message: Message,
-  messages: Message[],
-  selectedModelId: string
-): Message {
-  // Create a copy of the message to avoid mutation
-  const messageCopy = { ...message };
-  let parentMessageId = null;
-
-  // For assistant messages, parent should be the last user message
-  if (message.role === "assistant") {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === "user") {
-        parentMessageId = messages[i].id;
-        break;
-      }
-    }
-  }
-  // For user messages, parent should be the last assistant message if any
-  else if (message.role === "user" && messages.length > 0) {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === "assistant") {
-        parentMessageId = messages[i].id;
-        break;
-      }
-    }
-  }
-
-  return {
-    ...messageCopy,
-    parent_id: parentMessageId,
-    children_ids: (messageCopy as ExtendedMessage).children_ids || [],
-    // For assistant messages, always set the model
-    model:
-      message.role === "assistant"
-        ? selectedModelId || "unknown"
-        : (messageCopy as ExtendedMessage).model,
-    // Ensure parts is defined for compatibility
-    parts: Array.isArray((messageCopy as any).parts)
-      ? (messageCopy as any).parts
-      : [],
-  } as Message;
-}
-
-/**
  * Saves chat messages to the database
  * @param chatId The chat ID
  * @param messages Array of messages to save
+ * @param currentId Optional ID of the current active message
  * @returns Promise that resolves when save is complete
  */
 export async function saveChatMessages(
   chatId: string,
-  messages: Message[]
+  messages: Message[],
+  currentId?: string | null
 ): Promise<Response> {
   // Final check to ensure all assistant messages have a model
   const sanitizedMessages = messages.map((message) => {
@@ -277,7 +120,12 @@ export async function saveChatMessages(
   return fetch(`/api/chat/messages?id=${chatId}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages: sanitizedMessages }),
+    body: JSON.stringify({
+      messages: sanitizedMessages,
+      currentId:
+        currentId ||
+        (messages.length > 0 ? messages[messages.length - 1].id : null),
+    }),
   });
 }
 
@@ -302,6 +150,8 @@ export function ensureExtendedMessage(message: Message): ExtendedMessage {
   };
 }
 
+// TODO: Refactor / remove
+
 // Helper function to process messages and handle branch logic
 export function processMessages(
   messages: ValidatedMessage[],
@@ -310,7 +160,7 @@ export function processMessages(
     skipUserMessage?: boolean;
     isBranch?: boolean;
   }
-) {
+): ValidatedMessage[] {
   // Log the original message count and options
   console.log(`Processing ${messages.length} messages with options:`, options);
 
@@ -545,224 +395,6 @@ export function removeDuplicateUserMessages(
   return updatedMessages.filter((msg) => !toRemove.has(msg.id));
 }
 
-// Add a utility function to convert custom stream format to format expected by streamChatMessage
-export async function createCompatibleDataStream(
-  response: Response
-): Promise<Response> {
-  // Create a TransformStream to modify the data
-  const { readable, writable } = new TransformStream();
-
-  // Clone the response we're going to transform
-  const clonedResponse = response.clone();
-
-  console.log("Creating compatible data stream");
-  console.log(
-    "Original response headers:",
-    Object.fromEntries([...clonedResponse.headers.entries()])
-  );
-
-  if (!clonedResponse.body) {
-    console.error("Response body is null");
-    return response; // Return original if no body
-  }
-
-  // Process the stream
-  const reader = clonedResponse.body.getReader();
-  const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
-  const writer = writable.getWriter();
-
-  // Process chunks
-  (async () => {
-    try {
-      let buffer = "";
-      let done = false;
-
-      while (!done) {
-        const result = await reader.read();
-        done = result.done;
-
-        if (done) {
-          console.log("Stream processing complete");
-          await writer.close();
-          break;
-        }
-
-        // Decode the chunk and add to buffer
-        buffer += decoder.decode(result.value, { stream: true });
-
-        // Process complete lines
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || ""; // Keep the last incomplete line in the buffer
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-
-          console.log("Original line:", line);
-
-          // If it's already in data: format, pass it through
-          if (line.startsWith("data: ")) {
-            await writer.write(encoder.encode(line + "\n\n"));
-            continue;
-          }
-
-          // Convert custom format (f:, 0:, e:, d:) to data: format
-          const match = line.match(/^([a-z]):(.*)/);
-
-          if (match) {
-            const [, prefix, content] = match;
-            let jsonObj = {};
-
-            try {
-              // For text content (0:), we need special handling to extract the actual text
-              if (prefix === "0") {
-                // Try to extract the actual string content directly
-                let actualText = "";
-
-                try {
-                  // First, try treating it as a JSON string
-                  actualText = JSON.parse(content);
-                  if (typeof actualText !== "string") {
-                    // If the parsed content isn't a string, fallback to regex extraction
-                    const extractMatch = content.match(/^"(.*?)"$/);
-                    if (extractMatch) {
-                      actualText = extractMatch[1].replace(/\\(.)/g, "$1"); // Handle escaped chars
-                    } else {
-                      actualText = content; // Last resort: use content as-is
-                    }
-                  }
-                } catch (parseErr) {
-                  // If JSON parsing fails, try regex extraction
-                  const extractMatch = content.match(/^"(.*?)"$/);
-                  if (extractMatch) {
-                    actualText = extractMatch[1].replace(/\\(.)/g, "$1"); // Handle escaped chars
-                  } else {
-                    actualText = content; // Last resort: use content as-is
-                  }
-                }
-
-                // Create the text object with the extracted content
-                jsonObj = {
-                  type: "text",
-                  value: actualText, // Use the actual extracted text
-                };
-
-                console.log("Extracted text content:", actualText);
-              } else {
-                // For other types, parse the content as JSON object
-                const parsedContent = JSON.parse(content);
-
-                // Map to the expected format based on prefix
-                if (prefix === "f") {
-                  // Start message
-                  jsonObj = {
-                    type: "start_step",
-                    messageId: parsedContent.messageId || null,
-                  };
-                } else if (prefix === "e") {
-                  // End message
-                  jsonObj = {
-                    type: "finish_step",
-                    finishReason: parsedContent.finishReason || "stop",
-                  };
-                } else if (prefix === "d") {
-                  // Done message
-                  jsonObj = {
-                    type: "finish_message",
-                    finishReason: parsedContent.finishReason || "stop",
-                    ...(parsedContent.usage && { usage: parsedContent.usage }),
-                  };
-                }
-              }
-
-              // Encode to the expected data: format
-              const transformedLine = `data: ${JSON.stringify(jsonObj)}\n\n`;
-              console.log("Transformed to:", transformedLine);
-              await writer.write(encoder.encode(transformedLine));
-            } catch (err) {
-              console.error(
-                `Error transforming stream line (${prefix}:${content}):`,
-                err
-              );
-
-              // Fallback: If we can't parse JSON, treat as plain text for 0: prefix
-              if (prefix === "0") {
-                try {
-                  // Handle case where the content might not be properly JSON quoted
-                  const textContent = content.trim();
-                  const jsonObj = {
-                    type: "text",
-                    value:
-                      textContent.startsWith('"') && textContent.endsWith('"')
-                        ? JSON.parse(textContent) // It's a JSON string
-                        : textContent, // It's plain text
-                  };
-
-                  const transformedLine = `data: ${JSON.stringify(
-                    jsonObj
-                  )}\n\n`;
-                  console.log("Fallback transformed to:", transformedLine);
-                  await writer.write(encoder.encode(transformedLine));
-                } catch (innerErr) {
-                  console.error("Error in fallback text parsing:", innerErr);
-                  // Last resort: pass through with minimal transformation
-                  await writer.write(
-                    encoder.encode(
-                      `data: {"type":"text","value":${content}}\n\n`
-                    )
-                  );
-                }
-              } else {
-                // For non-text formats, create a minimal compatible response
-                let fallbackObj = {};
-
-                if (prefix === "f") {
-                  fallbackObj = { type: "start_step" };
-                } else if (prefix === "e") {
-                  fallbackObj = { type: "finish_step", finishReason: "stop" };
-                } else if (prefix === "d") {
-                  fallbackObj = {
-                    type: "finish_message",
-                    finishReason: "stop",
-                  };
-                }
-
-                await writer.write(
-                  encoder.encode(`data: ${JSON.stringify(fallbackObj)}\n\n`)
-                );
-              }
-            }
-          } else {
-            // Pass through lines that don't match our format
-            // But wrap them as data: text events to ensure compatibility
-            try {
-              const fallbackObj = { type: "text", value: line };
-              await writer.write(
-                encoder.encode(`data: ${JSON.stringify(fallbackObj)}\n\n`)
-              );
-            } catch (err) {
-              // Last resort: just pass through
-              await writer.write(encoder.encode(`${line}\n`));
-            }
-          }
-        }
-      }
-    } catch (err) {
-      console.error("Error processing stream:", err);
-      await writer.close();
-    }
-  })();
-
-  // Create new response with transformed body
-  return new Response(readable, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
-  });
-}
-
 /**
  * Normalizes a message to ensure all expected fields are present
  * with proper defaults
@@ -868,84 +500,4 @@ export function findDuplicateUserMessage(
   }
 
   return null;
-}
-
-/**
- * Establishes or repairs parent-child relationships in a message collection
- */
-export function establishMessageRelationships(
-  messages: ExtendedMessage[]
-): ExtendedMessage[] {
-  // Sort chronologically first
-  const sortedMessages = [...messages].sort((a, b) => {
-    // Handle potential undefined dates safely
-    const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-    const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-    return aTime - bTime;
-  });
-
-  // First pass: Apply basic relationship rules to all messages
-  const messagesWithBasicRelationships = sortedMessages.map((message, i) => {
-    const messageWithRelationships = { ...message };
-
-    // Initialize children_ids if it doesn't exist
-    messageWithRelationships.children_ids =
-      messageWithRelationships.children_ids || [];
-
-    // Ensure parent_id is explicitly set to null for the first message
-    if (i === 0) {
-      messageWithRelationships.parent_id = null;
-    } else if (!messageWithRelationships.parent_id) {
-      // Only set parent_id if it's not already set
-      // Find the most recent message of the opposite role before this message
-      let mostRecentOppositeRoleMessage = null;
-      for (let j = i - 1; j >= 0; j--) {
-        if (sortedMessages[j].role !== message.role) {
-          mostRecentOppositeRoleMessage = sortedMessages[j];
-          break;
-        }
-      }
-
-      // If this is an assistant message and we found a user message before it,
-      // or this is a user message and we found an assistant message before it,
-      // then set the parent_id to that message
-      if (mostRecentOppositeRoleMessage) {
-        messageWithRelationships.parent_id = mostRecentOppositeRoleMessage.id;
-      } else {
-        // If no opposite role message found, set parent_id to null
-        messageWithRelationships.parent_id = null;
-      }
-    }
-
-    return messageWithRelationships;
-  });
-
-  // Second pass: Update children_ids arrays based on the parent_id values
-  // This ensures bidirectional relationships are maintained
-  const finalMessages = messagesWithBasicRelationships.map((message) => {
-    // Start with a clean children_ids array
-    // We'll rebuild it based on who has this message as parent
-    return {
-      ...message,
-      children_ids: [] as string[],
-    };
-  });
-
-  // Now populate children_ids by looking at parent_id references
-  finalMessages.forEach((message) => {
-    if (message.parent_id) {
-      // Find the parent message
-      const parentIndex = finalMessages.findIndex(
-        (m) => m.id === message.parent_id
-      );
-      if (parentIndex !== -1) {
-        // Add this message's ID to the parent's children_ids if not already there
-        if (!finalMessages[parentIndex].children_ids.includes(message.id)) {
-          finalMessages[parentIndex].children_ids.push(message.id);
-        }
-      }
-    }
-  });
-
-  return finalMessages;
 }

@@ -50,6 +50,8 @@ yarn-error.log*
 
 data/chat.db
 
+tsconfig.tsbuildinfo
+
 .cursormemory.md
 
 /test-results

@@ -1,6 +1,7 @@
 import { beforeAll, afterAll, beforeEach } from "vitest";
 import fs from "fs";
 import path from "path";
+import "@testing-library/jest-dom";
 
 const TEST_DB_PATH = path.join(process.cwd(), "data", "test.db");
 const DATA_DIR = path.join(process.cwd(), "data");

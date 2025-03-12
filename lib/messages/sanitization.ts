@@ -8,27 +8,6 @@
 import { Message } from "ai";
 
 /**
- * Removes empty or invalid messages from the response
- * @param messages Array of messages to sanitize
- * @returns Filtered array of valid messages
- */
-export function sanitizeResponseMessages(
-  messages: Array<Message>
-): Array<Message> {
-  return messages.filter((message) => {
-    if (message.role !== "assistant") {
-      return true;
-    }
-
-    return (
-      message.content.trim().length > 0 ||
-      (Array.isArray(message.toolInvocations) &&
-        message.toolInvocations.length > 0)
-    );
-  });
-}
-
-/**
  * Sanitizes messages for UI display
  * @param messages Array of messages to sanitize
  * @returns Filtered array of valid messages

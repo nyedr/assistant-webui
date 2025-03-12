@@ -1,7 +1,6 @@
 import {
   Search,
   CircleCheck,
-  Paperclip,
   ChevronDown,
   LucideProps,
   ChevronRight,
@@ -14,6 +13,7 @@ import {
 } from "lucide-react";
 import { IconBaseProps } from "react-icons/lib";
 import { FaArrowUp } from "react-icons/fa";
+import { FiPaperclip } from "react-icons/fi";
 
 export const ChartLineIcon = ({ size = 16, className }: LucideProps) => {
   return <ChartLine width={size} height={size} className={className} />;
@@ -596,7 +596,7 @@ export const PaperclipIcon = ({
   size?: number;
   className?: string;
 }) => {
-  return <Paperclip size={size} className={className} {...props} />;
+  return <FiPaperclip size={size} className={className} {...props} />;
 };
 
 export const MoreHorizontalIcon = ({ className, ...props }: LucideProps) => {

@@ -8,83 +8,9 @@ import DeleteButton from "./ui/delete-button";
 import RetryButton from "./ui/retry-button";
 import ContinueButton from "./ui/continue-button";
 import { ExtendedMessage } from "@/lib/utils";
-import { ExtendedRequestOptions } from "@/hooks/use-ai-chat";
-import { Button } from "./ui/button";
-import { ChevronLeftIcon, ChevronRightIcon } from "./icons";
-
-// Add new component for branch navigation
-function BranchNavigation({
-  message,
-  scrollToMessage,
-  chatId,
-  getBranchInfo,
-  switchBranch,
-}: {
-  message: ExtendedMessage;
-  scrollToMessage?: (messageId: string) => void;
-  chatId: string;
-  getBranchInfo: (parentMessageId: string) => {
-    currentIndex: number;
-    totalBranches: number;
-  };
-  switchBranch: (parentMessageId: string, branchIndex: number) => void;
-}) {
-  // Only show branch navigation if the message has a parent
-  if (!message.parent_id) {
-    return null;
-  }
-
-  const { currentIndex, totalBranches } = getBranchInfo(message.parent_id);
-
-  // Only show if there are multiple branches
-  if (totalBranches <= 1) {
-    return null;
-  }
-
-  const handlePrevBranch = () => {
-    const newIndex = (currentIndex - 1 + totalBranches) % totalBranches;
-    switchBranch(message.parent_id!, newIndex);
-    if (scrollToMessage) {
-      scrollToMessage(message.id);
-    }
-  };
-
-  const handleNextBranch = () => {
-    const newIndex = (currentIndex + 1) % totalBranches;
-    switchBranch(message.parent_id!, newIndex);
-    if (scrollToMessage) {
-      scrollToMessage(message.id);
-    }
-  };
-
-  return (
-    <div className="flex items-center mr-2 text-xs text-muted-foreground">
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-6 w-6"
-        onClick={handlePrevBranch}
-        disabled={totalBranches <= 1}
-      >
-        <ChevronLeftIcon className="h-3 w-3" />
-      </Button>
-
-      <span className="mx-1 min-w-8 text-center">
-        {currentIndex + 1}/{totalBranches}
-      </span>
-
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-6 w-6"
-        onClick={handleNextBranch}
-        disabled={totalBranches <= 1}
-      >
-        <ChevronRightIcon className="h-3 w-3" />
-      </Button>
-    </div>
-  );
-}
+import { BranchInfo } from "@/lib/messages/branching";
+import { toast } from "sonner";
+import BranchNavigation from "./branch-navigation";
 
 export function PureMessageActions({
   chatId,
@@ -92,11 +18,10 @@ export function PureMessageActions({
   isLoading,
   onMessageDelete,
   setMessages,
-  reload,
   retryMessage,
   continue: continueMessage,
   scrollToMessage,
-  getBranchInfo,
+  branchInfo,
   switchBranch,
 }: {
   chatId: string;
@@ -106,21 +31,13 @@ export function PureMessageActions({
   setMessages?: (
     messages: Message[] | ((messages: Message[]) => Message[])
   ) => void;
-  reload?: (
-    chatRequestOptions?: ExtendedRequestOptions
-  ) => Promise<string | null | undefined>;
-  retryMessage?: (messageId: string) => Promise<string | null | undefined>;
-  continue?: (messageId: string) => Promise<string | null | undefined>;
+  retryMessage: (messageId: string) => Promise<string | null | undefined>;
+  continue: (messageId: string) => Promise<string | null | undefined>;
   scrollToMessage?: (messageId: string) => void;
-  getBranchInfo?: (parentMessageId: string) => {
-    currentIndex: number;
-    totalBranches: number;
-  };
-  switchBranch?: (parentMessageId: string, branchIndex: number) => void;
+  branchInfo?: BranchInfo;
+  switchBranch: (parentMessageId: string, branchIndex: number) => void;
 }) {
-  if (isLoading) return null;
-  if (message.role === "user") return null;
-
+  // Move all hooks before any conditional returns
   const handleDelete = useCallback(() => {
     // If we have a setMessages function, update the UI immediately
     if (setMessages) {
@@ -136,46 +53,35 @@ export function PureMessageActions({
     }
   }, [message.id, setMessages, onMessageDelete]);
 
-  const handleRetry = useCallback(async (): Promise<
-    string | null | undefined
-  > => {
-    // If we have retryMessage from useAIChat, use that directly
-    if (retryMessage) {
-      return retryMessage(message.id);
-    }
-
-    // Fallback to older reload behavior if retryMessage is not available
-    if (!reload) return null;
-
-    return reload({
-      options: {
-        parentMessageId: (message as ExtendedMessage).parent_id || undefined,
-      },
-    });
-  }, [message.id, retryMessage, reload]);
+  const handleRetry = useCallback(async () => {
+    return retryMessage(message.id);
+  }, [message.id, retryMessage]);
 
   const handleContinue = useCallback(async () => {
-    if (continueMessage) {
-      try {
-        await continueMessage(message.id);
-      } catch (error) {
-        console.error("Error continuing message:", error);
-        // You could add toast notification here if desired
-      }
-    } else {
-      console.warn("Continue function not provided");
+    try {
+      await continueMessage(message.id);
+    } catch (error) {
+      console.error("Error continuing message:", error);
+      // You could add toast notification here if desired
+
+      toast.error("Error continuing message:", {
+        description: error instanceof Error ? error.message : "Unknown error",
+      });
     }
   }, [message.id, continueMessage]);
 
+  // Now we can have conditional returns
+  if (isLoading) return null;
+  if (message.role === "user") return null;
+
   return (
     <div className="flex flex-row gap-1 items-center">
-      {/* Add BranchNavigation component if getBranchInfo and switchBranch are provided */}
-      {getBranchInfo && switchBranch && message.parent_id && (
+      {branchInfo && branchInfo.totalBranches > 1 && message.parent_id && (
         <BranchNavigation
-          message={message}
+          parent_id={message.parent_id}
+          message_id={message.id}
           scrollToMessage={scrollToMessage}
-          chatId={chatId}
-          getBranchInfo={getBranchInfo}
+          branchInfo={branchInfo}
           switchBranch={switchBranch}
         />
       )}

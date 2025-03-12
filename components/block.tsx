@@ -12,7 +12,7 @@ import useSWR, { useSWRConfig } from "swr";
 import { useDebounceCallback, useWindowSize } from "usehooks-ts";
 
 import type { Document, Suggestion } from "@/lib/db/schema";
-import { cn, fetcher } from "@/lib/utils";
+import { cn, ExtendedMessage, fetcher } from "@/lib/utils";
 
 import { DiffView } from "./diffview";
 import { DocumentSkeleton } from "./document-skeleton";
@@ -29,12 +29,9 @@ import { useSidebar } from "./ui/sidebar";
 import { useBlock } from "@/hooks/use-block";
 import equal from "fast-deep-equal";
 import { ImageEditor } from "./image-editor";
-import { Message, CreateMessage } from "ai";
+import { Message } from "ai";
 import { Attachment } from "ai";
-import {
-  ChatRequestOptions,
-  ExtendedRequestOptions,
-} from "@/hooks/use-ai-chat";
+import { ExtendedRequestOptions } from "@/hooks/use-ai-chat";
 
 export type BlockKind = "text" | "code" | "image";
 
@@ -77,8 +74,8 @@ interface BlockProps {
     options?: ExtendedRequestOptions
   ) => Promise<void>;
   append: (
-    message: Message | CreateMessage,
-    chatRequestOptions?: ChatRequestOptions
+    message: ExtendedMessage,
+    chatRequestOptions?: ExtendedRequestOptions
   ) => Promise<string | null | undefined>;
   messages: Message[];
   setMessages: (
@@ -354,7 +351,6 @@ function PureBlock({
                     attachments={attachments}
                     setAttachments={setAttachments}
                     messages={messages}
-                    append={append}
                     setMessages={setMessages}
                   />
                 </form>

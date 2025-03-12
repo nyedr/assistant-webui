@@ -1,8 +1,13 @@
-import { Markdown, MarkdownProps } from "@lobehub/ui";
-import { useControls, useCreateStore } from "@lobehub/ui/storybook";
 import { LinkPreview } from "./ui/link-preview";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import Markdown, { Options } from "react-markdown";
+import { Image } from "@lobehub/ui";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { dracula } from "react-syntax-highlighter/dist/cjs/styles/prism";
+import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
+import { CodeBlock } from "./code-block";
 
 export default function ChatMarkdown({
   content,
@@ -14,19 +19,6 @@ export default function ChatMarkdown({
   // Create a ref to track the rendered content
   const contentRef = useRef<HTMLDivElement>(null);
   const [isContentTruncated, setIsContentTruncated] = useState(false);
-
-  // IMPORTANT: Don't use useControls for content at all - it truncates the text!
-  // Only use it for styling options
-  const store = useCreateStore();
-  const markdownOptions = useControls(
-    {
-      variant: {
-        options: ["normal", "chat"] as const,
-        value: "chat" as const,
-      },
-    },
-    { store }
-  );
 
   // Check if the content is being truncated
   useEffect(() => {
@@ -44,28 +36,32 @@ export default function ChatMarkdown({
   }, [isContentTruncated]);
 
   // Define comprehensive markdown options to ensure proper rendering
-  const markdownComponentProps: MarkdownProps = {
-    className: "markdown w-full overflow-hidden break-words",
-    fullFeaturedCodeBlock: true,
-    fontSize: 16,
-    lineHeight: 1.75,
-    variant: markdownOptions.variant,
-    children: content, // Use original content without preprocessing
-    allowHtml: true,
-    componentProps: {
-      a: {
-        rel: "noopener noreferrer",
-        target: "_blank",
-      },
-      highlight: {
-        className: "text-base leading-7 text-foreground",
-        copyButtonSize: "large",
-      },
-      img: {
-        className: "w-full h-auto max-w-3xl",
-      },
-    },
+  const markdownComponentProps: Options = {
+    rehypePlugins: [rehypeRaw],
+    remarkPlugins: [remarkGfm],
+    className:
+      "w-full max-w-3xl overflow-hidden break-words text-base leading-7",
     components: {
+      code: ({ node, inline, className, children, ...props }: any) => {
+        const match = /language-(\w+)/.exec(className || "");
+
+        if (inline) {
+          return (
+            <code className="inline-code" {...props}>
+              {children}
+            </code>
+          );
+        }
+
+        return (
+          !inline &&
+          match && (
+            <CodeBlock language={match[1]}>
+              {String(children).replace(/\n$/, "")}
+            </CodeBlock>
+          )
+        );
+      },
       a: ({ href, children, className }: any) => (
         <LinkPreview className={className} url={href}>
           {children}
@@ -159,18 +155,19 @@ export default function ChatMarkdown({
       strong: ({ children }: any) => (
         <strong className="font-semibold">{children}</strong>
       ),
+      img: ({ src, alt }: any) => (
+        <Image
+          src={src}
+          alt={alt}
+          borderless={true}
+          wrapperClassName="my-0 w-full max-w-3xl box-shadow-none"
+          objectFit="contain"
+          className="my-0"
+        />
+      ),
     },
   };
 
   // Create the markdown component with proper styling
-  return (
-    <div
-      ref={contentRef}
-      className="w-full overflow-visible markdown-container whitespace-pre-line"
-      data-content-length={content.length}
-    >
-      {/* Use the Markdown component directly with our comprehensive props */}
-      <Markdown {...markdownComponentProps} />
-    </div>
-  );
+  return <Markdown {...markdownComponentProps}>{content}</Markdown>;
 }

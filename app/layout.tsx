@@ -9,8 +9,8 @@ import "./globals.css";
 import { ReactScan } from "@/components/scan";
 
 export const metadata: Metadata = {
-  title: "Next.js Chatbot Template",
-  description: "Next.js chatbot template using the AI SDK.",
+  title: "Local Chatbot",
+  description: "Local Chatbot",
 };
 
 export const viewport = {

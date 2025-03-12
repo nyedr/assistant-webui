@@ -2,9 +2,7 @@ import { NextResponse } from "next/server";
 import { LanguageModel, streamText } from "ai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { z } from "zod";
-import { ChatCompletionMessageParam } from "openai/resources/chat/completions.mjs";
 import logger from "@/lib/utils/logger";
-import { createCompatibleDataStream } from "@/lib/utils/messages";
 import { messageSchema, ValidatedMessage } from "@/lib/utils/messages";
 import { handleContinuation } from "@/lib/utils/chat";
 
@@ -173,155 +171,105 @@ export async function POST(req: Request): Promise<Response> {
     });
 
     // Handle streaming response with streamText
-    if (stream) {
-      logger.debug(`Stream protocol: ${streamProtocol}`, { module: "proxy" });
+    logger.debug(`Stream protocol: ${streamProtocol}`, { module: "proxy" });
 
-      // Process messages based on options
-      let processedMessages = processMessages(messages, body.options);
+    // Process messages based on options
+    let processedMessages = processMessages(messages, body.options);
 
-      // Handle continuation if needed
-      if (isContinuation && continueMessageId && originalContent) {
-        processedMessages = handleContinuation(
-          processedMessages,
-          continueMessageId,
-          originalContent
-        );
-      }
-
-      // Add detailed logging of processed messages
-      logger.debug(`Processed messages (${processedMessages.length}):`, {
-        module: "proxy",
-      });
-
-      processedMessages.forEach((msg: RouteValidatedMessage, idx: number) => {
-        logger.debug(
-          `[${idx}] ${msg.role}: ${msg.content.substring(0, 50)}${
-            msg.content.length > 50 ? "..." : ""
-          }`,
-          { module: "proxy" }
-        );
-      });
-
-      const coreMessages = processedMessages.map(createTypedMessage);
-
-      // Log final messages being sent to LLM
-      logger.info(`Sending ${coreMessages.length} messages to ${model}`, {
-        module: "proxy",
-      });
-
-      // Safety check - ensure we're not sending empty messages
-      const validMessages = coreMessages.filter(
-        (msg: { content: string }) => msg.content && msg.content.trim() !== ""
+    // Handle continuation if needed
+    if (isContinuation && continueMessageId && originalContent) {
+      processedMessages = handleContinuation(
+        processedMessages,
+        continueMessageId,
+        originalContent
       );
+    }
 
-      if (validMessages.length !== coreMessages.length) {
-        logger.warn(
-          `WARNING: Filtered out ${
-            coreMessages.length - validMessages.length
-          } empty messages`,
-          { module: "proxy" }
-        );
-      }
+    // Add detailed logging of processed messages
+    logger.debug(`Processed messages (${processedMessages.length}):`, {
+      module: "proxy",
+    });
 
-      if (validMessages.length === 0) {
-        // If we have no valid messages, add a default system prompt
-        validMessages.push({
-          role: "system",
-          content:
-            "You are a helpful AI assistant. Please provide a thoughtful response.",
-        } as const);
+    processedMessages.forEach((msg: RouteValidatedMessage, idx: number) => {
+      logger.debug(
+        `[${idx}] ${msg.role}: ${msg.content.substring(0, 50)}${
+          msg.content.length > 50 ? "..." : ""
+        }`,
+        { module: "proxy" }
+      );
+    });
 
-        logger.info(
-          "Added default system message because all messages were empty",
-          {
-            module: "proxy",
-          }
-        );
-      }
+    const coreMessages = processedMessages.map(createTypedMessage);
 
-      // Create a streamText result using the OpenAI-compatible provider
-      const result = streamText({
-        model: provider(model) as LanguageModel,
-        messages: coreMessages,
-        // Pass through any additional parameters provided in the request
-        ...(body.temperature && { temperature: body.temperature }),
-        ...(body.max_tokens && { maxTokens: body.max_tokens }),
-        ...(body.top_p && { topP: body.top_p }),
-        ...(body.frequency_penalty && {
-          frequencyPenalty: body.frequency_penalty,
-        }),
-        ...(body.presence_penalty && {
-          presencePenalty: body.presence_penalty,
-        }),
-        ...(body.reasoning && { reasoning: body.reasoning }),
-        seed: body.seed ? Number(body.seed) : undefined,
-      });
+    // Log final messages being sent to LLM
+    logger.info(`Sending ${coreMessages.length} messages to ${model}`, {
+      module: "proxy",
+    });
 
-      // Return a data stream response that works with the useChat hook
-      // Respect the requested protocol format
-      if (streamProtocol === "text") {
-        logger.debug("Returning text stream", { module: "proxy" });
-        return result.toTextStreamResponse();
-      } else {
-        // Default to data format
-        logger.debug("Using data stream protocol to return response", {
+    // Safety check - ensure we're not sending empty messages
+    const validMessages = coreMessages.filter(
+      (msg: { content: string }) => msg.content && msg.content.trim() !== ""
+    );
+
+    if (validMessages.length !== coreMessages.length) {
+      logger.warn(
+        `WARNING: Filtered out ${
+          coreMessages.length - validMessages.length
+        } empty messages`,
+        { module: "proxy" }
+      );
+    }
+
+    if (validMessages.length === 0) {
+      // If we have no valid messages, add a default system prompt
+      validMessages.push({
+        role: "system",
+        content:
+          "You are a helpful AI assistant. Please provide a thoughtful response.",
+      } as const);
+
+      logger.info(
+        "Added default system message because all messages were empty",
+        {
           module: "proxy",
-        });
+        }
+      );
+    }
 
-        // Get the data stream response
-        const dataStreamResponse = result.toDataStreamResponse();
+    // Create a streamText result using the OpenAI-compatible provider
+    const result = streamText({
+      model: provider(model) as LanguageModel,
+      messages: coreMessages,
+      // Pass through any additional parameters provided in the request
+      ...(body.temperature && { temperature: body.temperature }),
+      ...(body.max_tokens && { maxTokens: body.max_tokens }),
+      ...(body.top_p && { topP: body.top_p }),
+      ...(body.frequency_penalty && {
+        frequencyPenalty: body.frequency_penalty,
+      }),
+      ...(body.presence_penalty && {
+        presencePenalty: body.presence_penalty,
+      }),
+      ...(body.reasoning && { reasoning: body.reasoning }),
+      seed: body.seed ? Number(body.seed) : undefined,
+    });
 
-        // Return transformed stream
-        return createCompatibleDataStream(dataStreamResponse);
-      }
+    // Return a data stream response that works with the useChat hook
+    // Respect the requested protocol format
+    if (streamProtocol === "text") {
+      logger.debug("Returning text stream", { module: "proxy" });
+      return result.toTextStreamResponse();
     } else {
-      // For non-streaming responses, use the OpenAI SDK directly
-      logger.debug("Non-streaming request, using OpenAI SDK directly", {
+      // Default to data format
+      logger.debug("Using data stream protocol to return response", {
         module: "proxy",
       });
 
-      const { OpenAI } = await import("openai");
+      // Get the data stream response
+      const dataStreamResponse = result.toDataStreamResponse();
 
-      const openai = new OpenAI({
-        apiKey: process.env.NEXT_PUBLIC_CHAT_API_KEY,
-        baseURL: process.env.NEXT_PUBLIC_CHAT_BASE_URL,
-      });
-
-      // Convert messages to the format expected by OpenAI using our helper function
-      const processedMessages = processMessages(messages, body.options);
-
-      // Then convert to OpenAI format
-      const openaiMessages: ChatCompletionMessageParam[] =
-        processedMessages.map((msg: RouteValidatedMessage) => ({
-          role:
-            msg.role === "tool" ||
-            msg.role === "system" ||
-            msg.role === "user" ||
-            msg.role === "assistant"
-              ? msg.role
-              : "assistant", // OpenAI only supports specific roles
-          content: msg.content,
-          ...(msg.name && { name: msg.name }),
-        }));
-
-      const response = await openai.chat.completions.create({
-        model,
-        messages: openaiMessages,
-        stream: false,
-        // Pass through any additional parameters
-        ...(body.reasoning && { reasoning: body.reasoning }),
-        ...(body.temperature && { temperature: body.temperature }),
-        ...(body.max_tokens && { max_tokens: body.max_tokens }),
-        ...(body.top_p && { top_p: body.top_p }),
-        ...(body.frequency_penalty && {
-          frequency_penalty: body.frequency_penalty,
-        }),
-        ...(body.presence_penalty && {
-          presence_penalty: body.presence_penalty,
-        }),
-      });
-
-      return NextResponse.json(response);
+      // Return transformed stream
+      return dataStreamResponse;
     }
   } catch (error) {
     return createErrorResponse(
@@ -329,6 +277,8 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 }
+
+// TODO: Remove
 
 // Helper function to process messages and handle branch logic
 function processMessages(
