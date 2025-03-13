@@ -1,14 +1,15 @@
 "use client";
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
-import { memo, useCallback } from "react";
+import { memo, useCallback, Dispatch, SetStateAction } from "react";
 import CopyButton from "./ui/copy-button";
 import DeleteButton from "./ui/delete-button";
 import RetryButton from "./ui/retry-button";
 import ContinueButton from "./ui/continue-button";
-import { ExtendedMessage } from "@/lib/utils";
+import { cn, ExtendedMessage } from "@/lib/utils";
 import { ExtendedRequestOptions } from "@/hooks/use-ai-chat";
 import BranchNavigation from "./ui/branch-navigation";
+import EditMessageButton from "./ui/edit-message-button";
 
 export function PureMessageActions({
   chatId,
@@ -21,6 +22,7 @@ export function PureMessageActions({
   scrollToMessage,
   getBranchInfo,
   switchBranch,
+  setIsEditing,
 }: {
   chatId: string;
   message: ExtendedMessage;
@@ -37,9 +39,9 @@ export function PureMessageActions({
     totalBranches: number;
   };
   switchBranch?: (parentMessageId: string, branchIndex: number) => void;
+  setIsEditing: Dispatch<SetStateAction<boolean>>;
 }) {
   if (isLoading) return null;
-  if (message.role === "user") return null;
 
   const handleRetry = useCallback(async (): Promise<
     string | null | undefined
@@ -72,8 +74,15 @@ export function PureMessageActions({
     }
   }, [message.id, continueMessage]);
 
+  const isUserMessage = message.role === "user";
+
   return (
-    <div className="flex flex-row gap-1 items-center">
+    <div
+      className={cn("flex flex-row gap-1 items-center", {
+        "justify-end": isUserMessage,
+        "justify-start": !isUserMessage,
+      })}
+    >
       {/* Add BranchNavigation component if getBranchInfo and switchBranch are provided */}
       {getBranchInfo && switchBranch && message.parent_id && (
         <BranchNavigation
@@ -94,35 +103,47 @@ export function PureMessageActions({
         </TooltipContent>
       </Tooltip>
 
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <RetryButton
-            onRetry={handleRetry}
-            asChild={false}
-            messageId={message.id}
-            chatId={chatId}
-            model={(message as ExtendedMessage).model}
-          />
-        </TooltipTrigger>
-        <TooltipContent align="center" side="bottom">
-          Retry
-        </TooltipContent>
-      </Tooltip>
+      {!isUserMessage && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <RetryButton
+              onRetry={handleRetry}
+              asChild={false}
+              messageId={message.id}
+              chatId={chatId}
+              model={(message as ExtendedMessage).model}
+            />
+          </TooltipTrigger>
+          <TooltipContent align="center" side="bottom">
+            Retry
+          </TooltipContent>
+        </Tooltip>
+      )}
 
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <ContinueButton
-            continue={handleContinue}
-            chatId={chatId}
-            messageId={message.id}
-            scrollToMessage={scrollToMessage}
-            asChild={false}
-          />
-        </TooltipTrigger>
-        <TooltipContent align="center" side="bottom">
-          Continue
-        </TooltipContent>
-      </Tooltip>
+      {!isUserMessage && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <ContinueButton
+              continue={handleContinue}
+              chatId={chatId}
+              messageId={message.id}
+              scrollToMessage={scrollToMessage}
+              asChild={false}
+            />
+          </TooltipTrigger>
+          <TooltipContent align="center" side="bottom">
+            Continue
+          </TooltipContent>
+        </Tooltip>
+      )}
+
+      {isUserMessage && (
+        <EditMessageButton
+          content={message.content}
+          asChild={false}
+          setIsEditing={setIsEditing}
+        />
+      )}
 
       <Tooltip>
         <TooltipTrigger asChild>
@@ -145,6 +166,21 @@ export const MessageActions = memo(
   PureMessageActions,
   (prevProps, nextProps) => {
     if (prevProps.isLoading !== nextProps.isLoading) return false;
+
+    // Check critical props that would require re-rendering
+    if (prevProps.setIsEditing !== nextProps.setIsEditing) return false;
+    if (prevProps.deleteMessage !== nextProps.deleteMessage) return false;
+    if (prevProps.reload !== nextProps.reload) return false;
+    if (prevProps.retryMessage !== nextProps.retryMessage) return false;
+    if (prevProps.continue !== nextProps.continue) return false;
+    if (prevProps.scrollToMessage !== nextProps.scrollToMessage) return false;
+    if (prevProps.getBranchInfo !== nextProps.getBranchInfo) return false;
+    if (prevProps.switchBranch !== nextProps.switchBranch) return false;
+    if (prevProps.chatId !== nextProps.chatId) return false;
+
+    // Message comparison (checking ID is usually sufficient for messages)
+    if (prevProps.message.id !== nextProps.message.id) return false;
+    if (prevProps.message.content !== nextProps.message.content) return false;
 
     return true;
   }

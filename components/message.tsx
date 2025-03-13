@@ -4,13 +4,10 @@ import type { Message } from "ai";
 import { AnimatePresence, motion } from "framer-motion";
 import { memo, useState, useEffect, useRef, useCallback } from "react";
 
-import { PencilEditIcon } from "./icons";
 import ChatMarkdown from "./markdown";
 import { MessageActions } from "./message-actions";
 import { PreviewAttachment } from "./preview-attachment";
 import { cn, ensureExtendedMessage } from "@/lib/utils";
-import { Button } from "./ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { MessageEditor } from "./message-editor";
 import AnimatedGradientText from "./ui/gradient-text";
 import { ExtendedRequestOptions } from "@/hooks/use-ai-chat";
@@ -54,7 +51,7 @@ const PurePreviewMessage = ({
   const deleteMessage = useCallback(() => {
     // TODO: Remove message form parent children_ids array
     setMessages((currentMessages: Message[]) => {
-      return currentMessages.filter((msg) => msg.id !== message.id);
+      return currentMessages?.filter((msg) => msg.id !== message.id) || [];
     });
   }, [message.id, setMessages]);
 
@@ -99,24 +96,7 @@ const PurePreviewMessage = ({
             )}
 
             {message.content && !isEditing && (
-              <div className="flex flex-row gap-2 items-start w-full group-data-[role=user]/message:justify-end">
-                {isUserMessage && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        className="px-2 h-fit rounded-full text-muted-foreground opacity-0 group-hover/message:opacity-100"
-                        onClick={() => {
-                          setIsEditing(true);
-                        }}
-                      >
-                        <PencilEditIcon />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Edit message</TooltipContent>
-                  </Tooltip>
-                )}
-
+              <div className="flex flex-row gap-2 items-center w-full group-data-[role=user]/message:justify-end">
                 {isUserMessage ? (
                   <div
                     className="rounded-3xl px-5 py-2.5 bg-muted text-primary-foreground"
@@ -157,6 +137,7 @@ const PurePreviewMessage = ({
               chatId={chatId}
               message={ensureExtendedMessage(message)}
               isLoading={isLoading}
+              setIsEditing={setIsEditing}
               deleteMessage={deleteMessage}
               getBranchInfo={getBranchInfo}
               switchBranch={switchBranch}
@@ -186,6 +167,23 @@ export const PreviewMessage = memo(
 
     // Always re-render if message content changes
     if (prevProps.message.content !== nextProps.message.content) {
+      return false;
+    }
+
+    // Check for changes in all other props that would require a re-render
+    if (prevProps.chatId !== nextProps.chatId) return false;
+    if (prevProps.setMessages !== nextProps.setMessages) return false;
+    if (prevProps.reload !== nextProps.reload) return false;
+    if (prevProps.retryMessage !== nextProps.retryMessage) return false;
+    if (prevProps.continue !== nextProps.continue) return false;
+    if (prevProps.scrollToMessage !== nextProps.scrollToMessage) return false;
+    if (prevProps.getBranchInfo !== nextProps.getBranchInfo) return false;
+    if (prevProps.switchBranch !== nextProps.switchBranch) return false;
+
+    // Comparing message objects more thoroughly
+    if (
+      JSON.stringify(prevProps.message) !== JSON.stringify(nextProps.message)
+    ) {
       return false;
     }
 

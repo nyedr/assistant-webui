@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { LanguageModel, streamText } from "ai";
+import { LanguageModel, smoothStream, streamText } from "ai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { z } from "zod";
 import logger from "@/lib/utils/logger";
@@ -252,6 +252,7 @@ export async function POST(req: Request): Promise<Response> {
       }),
       ...(body.reasoning && { reasoning: body.reasoning }),
       seed: body.seed ? Number(body.seed) : undefined,
+      experimental_transform: smoothStream(),
     });
 
     // Return a data stream response that works with the useChat hook

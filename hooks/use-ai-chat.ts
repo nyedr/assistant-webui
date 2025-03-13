@@ -2,7 +2,6 @@
 
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { Message, Attachment } from "ai";
-// Import generic types instead of specific ones that don't exist
 import type { RequestOptions as AIRequestOptions } from "ai";
 import useSWR from "swr";
 import { StreamProtocol } from "@/lib/types/chat";
@@ -11,31 +10,23 @@ import {
   ensureExtendedMessage,
   ExtendedMessage,
 } from "@/lib/utils/messages";
-// Import error handling utilities
 import { handleError } from "@/lib/utils/error-handling";
-// Import relationship functions from the new module
 import {
   establishMessageRelationships,
   establishRelationshipsForNewMessage,
 } from "@/lib/messages/relationships";
-// Import the new streamChatMessages function
-// Import sanitization utilities
 import {
   sanitizeMessage,
   sanitizeUIMessages,
 } from "@/lib/messages/sanitization";
-// Import query utilities
 import { findLastUserMessageId } from "@/lib/messages/queries";
-// Import branching utilities
 import {
   getBranchInfo as getMessageBranchInfo,
   selectBranch,
   prepareRetryState,
   preserveMessageContent,
 } from "@/lib/messages/branching";
-// Use imported type from branching module
 import type { BranchState } from "@/lib/messages/branching";
-// Import middleware system
 import {
   ChatMiddleware,
   MiddlewareConfig,
@@ -44,7 +35,6 @@ import {
   executeOnRequestErrorMiddleware,
   getCombinedMiddlewares,
 } from "@/lib/chat/middleware";
-// Import dependency injection types
 import {
   HookDependencies,
   defaultDependencies,
@@ -52,14 +42,12 @@ import {
 import { continuePrompt } from "@/lib/ai/prompts";
 import { combineContent } from "@/lib/utils/chat";
 
-// Define our own ChatRequestOptions that includes what we need
 export type ChatRequestOptions = AIRequestOptions & {
   headers?: Record<string, string>;
   body?: Record<string, any>;
   experimental_attachments?: Attachment[];
 };
 
-// Extend our ChatRequestOptions to match what we need
 export interface ExtendedRequestOptions extends ExtendedChatRequestOptions {
   headers?: Record<string, string>;
   body?: Record<string, any>;
