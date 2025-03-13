@@ -17,6 +17,10 @@ interface ApplicationError extends Error {
   status: number;
 }
 
+export const removeInlineTicks = (str: string): string => {
+  return str.replace(/`/g, "");
+};
+
 /**
  * Generic data fetcher with error handling
  * Can be used with SWR or standalone
@@ -44,6 +48,13 @@ export const fetcher = async (url: string) => {
 export function truncateString(str: string, maxLength: number): string {
   if (str.length <= maxLength) return str;
   return str.slice(0, maxLength) + "...";
+}
+
+/**
+ * Capitalizes the first letter of a string
+ */
+export function capitalize(str: string): string {
+  return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
 /**

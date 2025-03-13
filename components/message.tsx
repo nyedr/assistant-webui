@@ -111,7 +111,10 @@ const PurePreviewMessage = ({
                 )}
 
                 {isUserMessage ? (
-                  <div className="user-message" data-message-role="user">
+                  <div
+                    className="rounded-3xl px-5 py-2.5 bg-muted text-primary-foreground"
+                    data-message-role="user"
+                  >
                     <ChatMarkdown
                       content={message.content}
                       isUserMessage={isUserMessage}
@@ -119,7 +122,7 @@ const PurePreviewMessage = ({
                   </div>
                 ) : (
                   <div
-                    className="assistant-message prose prose-sm dark:prose-invert max-w-none markdown-message-container"
+                    className="prose prose-sm dark:prose-invert max-w-none markdown-message-container"
                     data-message-role="assistant"
                   >
                     <ChatMarkdown content={message.content} />
