@@ -57,3 +57,8 @@ data/chat.db
 /playwright-report
 
 .cursor
+
+tsconfig.tsbuildinfo
+
+pnpm-lock.yaml
+

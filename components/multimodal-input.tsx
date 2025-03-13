@@ -16,11 +16,7 @@ import { useLocalStorage, useWindowSize } from "usehooks-ts";
 
 import { cn, generateUUID, sanitizeUIMessages } from "@/lib/utils";
 
-import {
-  createNewChat,
-  generateTitleFromUserMessage,
-  updateChatMessages,
-} from "@/app/(chat)/actions";
+import { createNewChat, updateChatMessages } from "@/app/(chat)/actions";
 
 import { ArrowUpIcon, PaperclipIcon, StopIcon } from "./icons";
 import { PreviewAttachment } from "./preview-attachment";
@@ -215,42 +211,25 @@ function PureMultimodalInput({
       // Only create new chat in the database if this is the first message
       // but use the same ID that was generated in the parent component
       if (messages.length === 0) {
-        console.log(
-          `First message - Creating/initializing chat record for ID: ${currentChatId}`
-        );
-        const title =
-          (await generateTitleFromUserMessage({
-            message: newUserMessage,
-          })) ?? "New Chat";
+        const title = input.slice(0, 30);
 
-        // Check if this chat already exists in the database
-        try {
-          // First, try to save the initial user message
-          await updateChatMessages(currentChatId, [newUserMessage]);
-          console.log(
-            `Successfully saved first user message to chat ${currentChatId}`
-          );
-        } catch (error) {
-          // If updating fails, the chat might not exist yet, so create it
-          console.log(`Chat ${currentChatId} doesn't exist yet, creating it`);
-          const result = await createNewChat(title, currentChatId);
-          if (!result.success) {
-            throw new Error("Failed to create chat");
-          }
+        const result = await createNewChat(title, currentChatId);
+        if (!result.success) {
+          throw new Error("Failed to create chat");
+        }
 
-          // Ensure we're using the ID from the parent
-          if (result.id !== currentChatId) {
-            console.warn(
-              `Warning: Created chat ID ${result.id} differs from parent ID ${currentChatId}`
-            );
-          }
-
-          // Add the user message
-          await updateChatMessages(currentChatId, [newUserMessage]);
-          console.log(
-            `Successfully saved first user message after creating chat ${currentChatId}`
+        // Ensure we're using the ID from the parent
+        if (result.id !== currentChatId) {
+          console.warn(
+            `Warning: Created chat ID ${result.id} differs from parent ID ${currentChatId}`
           );
         }
+
+        // Add the user message
+        await updateChatMessages(currentChatId, [newUserMessage]);
+        console.log(
+          `Successfully saved first user message after creating chat ${currentChatId}`
+        );
       } else {
         // For non-first messages, we need to be careful to include all existing messages plus the new one
         console.log(
@@ -299,29 +278,7 @@ function PureMultimodalInput({
       }
     } catch (error) {
       console.error("Error submitting message:", error);
-      if (error instanceof Error) {
-        console.error(`Error details: ${error.message}`);
-        if (error.message.includes("Chat not found")) {
-          console.error(
-            `Chat ID ${chatId} not found in database. This indicates a potential ID mismatch.`
-          );
 
-          // Try to investigate by checking sessionStorage for debug info
-          try {
-            const debugInfo = sessionStorage.getItem(`chatDebug_${chatId}`);
-            if (debugInfo) {
-              console.error(
-                `Previous debug info for chat ${chatId}:`,
-                JSON.parse(debugInfo)
-              );
-            } else {
-              console.error(`No debug info found for chat ${chatId}`);
-            }
-          } catch (e) {
-            console.error("Error retrieving debug info:", e);
-          }
-        }
-      }
       toast.error("Failed to send message. Please try again.");
     }
   }, [

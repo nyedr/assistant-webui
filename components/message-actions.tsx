@@ -2,96 +2,19 @@
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { memo, useCallback } from "react";
-import { Message } from "ai";
 import CopyButton from "./ui/copy-button";
 import DeleteButton from "./ui/delete-button";
 import RetryButton from "./ui/retry-button";
 import ContinueButton from "./ui/continue-button";
 import { ExtendedMessage } from "@/lib/utils";
 import { ExtendedRequestOptions } from "@/hooks/use-ai-chat";
-import { Button } from "./ui/button";
-import { ChevronLeftIcon, ChevronRightIcon } from "./icons";
-
-// Add new component for branch navigation
-function BranchNavigation({
-  message,
-  scrollToMessage,
-  chatId,
-  getBranchInfo,
-  switchBranch,
-}: {
-  message: ExtendedMessage;
-  scrollToMessage?: (messageId: string) => void;
-  chatId: string;
-  getBranchInfo: (parentMessageId: string) => {
-    currentIndex: number;
-    totalBranches: number;
-  };
-  switchBranch: (parentMessageId: string, branchIndex: number) => void;
-}) {
-  // Only show branch navigation if the message has a parent
-  if (!message.parent_id) {
-    return null;
-  }
-
-  const { currentIndex, totalBranches } = getBranchInfo(message.parent_id);
-
-  // Only show if there are multiple branches
-  if (totalBranches <= 1) {
-    return null;
-  }
-
-  const handlePrevBranch = () => {
-    const newIndex = (currentIndex - 1 + totalBranches) % totalBranches;
-    switchBranch(message.parent_id!, newIndex);
-    if (scrollToMessage) {
-      scrollToMessage(message.id);
-    }
-  };
-
-  const handleNextBranch = () => {
-    const newIndex = (currentIndex + 1) % totalBranches;
-    switchBranch(message.parent_id!, newIndex);
-    if (scrollToMessage) {
-      scrollToMessage(message.id);
-    }
-  };
-
-  return (
-    <div className="flex items-center mr-2 text-xs text-muted-foreground">
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-6 w-6"
-        onClick={handlePrevBranch}
-        disabled={totalBranches <= 1}
-      >
-        <ChevronLeftIcon className="h-3 w-3" />
-      </Button>
-
-      <span className="mx-1 min-w-8 text-center">
-        {currentIndex + 1}/{totalBranches}
-      </span>
-
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-6 w-6"
-        onClick={handleNextBranch}
-        disabled={totalBranches <= 1}
-      >
-        <ChevronRightIcon className="h-3 w-3" />
-      </Button>
-    </div>
-  );
-}
+import BranchNavigation from "./ui/branch-navigation";
 
 export function PureMessageActions({
   chatId,
   message,
   isLoading,
-  onMessageDelete,
-  setMessages,
+  deleteMessage,
   reload,
   retryMessage,
   continue: continueMessage,
@@ -102,10 +25,7 @@ export function PureMessageActions({
   chatId: string;
   message: ExtendedMessage;
   isLoading: boolean;
-  onMessageDelete?: () => void;
-  setMessages?: (
-    messages: Message[] | ((messages: Message[]) => Message[])
-  ) => void;
+  deleteMessage: () => void;
   reload?: (
     chatRequestOptions?: ExtendedRequestOptions
   ) => Promise<string | null | undefined>;
@@ -120,21 +40,6 @@ export function PureMessageActions({
 }) {
   if (isLoading) return null;
   if (message.role === "user") return null;
-
-  const handleDelete = useCallback(() => {
-    // If we have a setMessages function, update the UI immediately
-    if (setMessages) {
-      setMessages((currentMessages: Message[]) => {
-        // Remove only the current message
-        return currentMessages.filter((msg) => msg.id !== message.id);
-      });
-    }
-
-    // Call the optional onMessageDelete callback
-    if (onMessageDelete) {
-      onMessageDelete();
-    }
-  }, [message.id, setMessages, onMessageDelete]);
 
   const handleRetry = useCallback(async (): Promise<
     string | null | undefined
@@ -224,7 +129,7 @@ export function PureMessageActions({
           <DeleteButton
             chatId={chatId}
             messageId={message.id}
-            onDelete={handleDelete}
+            onDelete={deleteMessage}
             asChild={false}
           />
         </TooltipTrigger>

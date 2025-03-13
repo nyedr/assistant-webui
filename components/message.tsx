@@ -2,7 +2,7 @@
 
 import type { Message } from "ai";
 import { AnimatePresence, motion } from "framer-motion";
-import { memo, useState, useEffect, useRef } from "react";
+import { memo, useState, useEffect, useRef, useCallback } from "react";
 
 import { PencilEditIcon } from "./icons";
 import ChatMarkdown from "./markdown";
@@ -50,6 +50,13 @@ const PurePreviewMessage = ({
   const [isEditing, setIsEditing] = useState(false);
   const isMountedRef = useRef(true);
   const isUserMessage = message.role === "user";
+
+  const deleteMessage = useCallback(() => {
+    // TODO: Remove message form parent children_ids array
+    setMessages((currentMessages: Message[]) => {
+      return currentMessages.filter((msg) => msg.id !== message.id);
+    });
+  }, [message.id, setMessages]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -150,7 +157,7 @@ const PurePreviewMessage = ({
               chatId={chatId}
               message={ensureExtendedMessage(message)}
               isLoading={isLoading}
-              setMessages={setMessages}
+              deleteMessage={deleteMessage}
               getBranchInfo={getBranchInfo}
               switchBranch={switchBranch}
               reload={(options?: ExtendedRequestOptions) => {
